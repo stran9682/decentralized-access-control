@@ -8,12 +8,17 @@ use tokio_stream::StreamExt;
 
 use crate::iroh::iroh_instance::IrohInstance;
 
+#[derive(Debug, Clone)]
 pub struct AccessListManager {
     iroh_instance: IrohInstance,
 }
 
 impl AccessListManager {
-    pub async fn new_doc(&self, tag: &String, ticket: Option<String>) -> anyhow::Result<Doc> {
+    pub fn new(iroh_instance: IrohInstance) -> Self {
+        Self { iroh_instance }
+    }
+
+    pub async fn new_doc(&self, tag: &str, ticket: Option<String>) -> anyhow::Result<Doc> {
         let doc = match ticket {
             Some(ticket) => {
                 let ticket = DocTicket::from_str(&ticket)?;
@@ -33,7 +38,7 @@ impl AccessListManager {
 
     pub async fn append_access_list(
         &self,
-        tag: &String,
+        tag: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
         if let Some((doc, mut access_list)) = self.get_access_list(tag, endpoint_id).await? {
@@ -105,10 +110,12 @@ impl AccessListManager {
     async fn insert_bytes(
         &self,
         doc: &Doc,
-        tag: &String,
+        tag: &str,
         access_list: &HashSet<EndpointId>,
     ) -> anyhow::Result<()> {
         let content = serde_json::to_vec(access_list)?;
+        let tag = String::from(tag);
+
         doc.set_bytes(
             self.iroh_instance.docs().author_default().await?,
             tag.clone(),

@@ -605,6 +605,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "decentralized-access-control"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iroh",
+ "iroh-blobs",
+ "iroh-docs",
+ "iroh-gossip",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "der"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1087,21 +1102,6 @@ dependencies = [
  "futures-core",
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "gossip-simulation"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "iroh",
- "iroh-blobs",
- "iroh-docs",
- "iroh-gossip",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

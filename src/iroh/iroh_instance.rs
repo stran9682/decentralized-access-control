@@ -7,6 +7,7 @@ use iroh_docs::protocol::Docs;
 use iroh_gossip::Gossip;
 use tokio::io::AsyncWriteExt;
 
+#[derive(Debug, Clone)]
 pub struct IrohInstance {
     store: FsStore,
     docs: Docs,
