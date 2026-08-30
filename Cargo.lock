@@ -1098,6 +1098,7 @@ dependencies = [
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
+ "tempfile",
  "tokio",
 ]
 

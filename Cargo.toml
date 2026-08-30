@@ -9,4 +9,5 @@ iroh = "1.1.0"
 iroh-blobs = "0.103.0"
 iroh-docs = "0.101.0"
 iroh-gossip = "0.101.0"
+tempfile = "3.27.0"
 tokio = {version = "1", features = ["full"]}
