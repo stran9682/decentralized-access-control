@@ -3,6 +3,7 @@ use iroh::{
     endpoint::{RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
+use iroh_docs::DocTicket;
 
 use crate::{access_list::list_manager::AccessListManager, store::storage_manager::StorageManager};
 
@@ -63,8 +64,15 @@ impl AccessControl {
         }
 
         self.storage_manager.retrieve(&tag, send).await?;
-        send.finish()?;
 
         Ok(())
+    }
+
+    pub async fn upload_new(&self, tag: &str, path: &str) {
+        todo!()
+    }
+
+    pub async fn import(&self, ticket: DocTicket) {
+        todo!()
     }
 }

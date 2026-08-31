@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+axum = "0.8.9"
 iroh = "1.1.0"
 iroh-blobs = "0.103.0"
 iroh-docs = "0.101.0"

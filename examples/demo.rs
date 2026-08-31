@@ -5,7 +5,7 @@ use decentralized_access_control::{
     access_list::list_manager::AccessListManager,
     iroh::iroh_instance::IrohInstance,
     protocol::access_control::AccessControl,
-    store::storage_manager::{self, StorageManager},
+    store::storage_manager::StorageManager,
 };
 use iroh::{
     Endpoint,
