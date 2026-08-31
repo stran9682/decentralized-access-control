@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use iroh::{Endpoint, SecretKey, endpoint::presets};
-use iroh_blobs::{api::blobs::Blobs, store::fs::FsStore};
+use iroh_blobs::{
+    api::Store,
+    store::fs::FsStore,
+};
 use iroh_docs::protocol::Docs;
 use iroh_gossip::Gossip;
 use tokio::io::AsyncWriteExt;
@@ -43,8 +46,8 @@ impl IrohInstance {
         &self.endpoint
     }
 
-    pub fn blobs(&self) -> &Blobs {
-        self.store.blobs()
+    pub fn blobs(&self) -> &Store {
+        &self.store
     }
 
     pub fn docs(&self) -> &Docs {

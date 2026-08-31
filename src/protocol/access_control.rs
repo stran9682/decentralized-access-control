@@ -4,11 +4,12 @@ use iroh::{
     protocol::ProtocolHandler,
 };
 
-use crate::access_list::list_manager::AccessListManager;
+use crate::{access_list::list_manager::AccessListManager, store::storage_manager::StorageManager};
 
 #[derive(Debug, Clone)]
 pub struct AccessControl {
     list_manager: AccessListManager,
+    storage_manager: StorageManager,
 }
 
 impl ProtocolHandler for AccessControl {
@@ -17,11 +18,14 @@ impl ProtocolHandler for AccessControl {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let peer: EndpointId = connection.remote_id();
-        while let Ok((send, recv)) = connection.accept_bi().await {
+        while let Ok((mut send, mut recv)) = connection.accept_bi().await {
             let access_control = self.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = access_control.handle_request(peer, send, recv).await {
+                if let Err(e) = access_control
+                    .handle_request(peer, &mut send, &mut recv)
+                    .await
+                {
                     eprintln!("Error handling request: {}", e)
                 }
             });
@@ -32,15 +36,18 @@ impl ProtocolHandler for AccessControl {
 }
 
 impl AccessControl {
-    pub fn new(list_manager: AccessListManager) -> Self {
-        Self { list_manager }
+    pub fn new(list_manager: AccessListManager, storage_manager: StorageManager) -> Self {
+        Self {
+            list_manager,
+            storage_manager,
+        }
     }
 
     async fn handle_request(
         &self,
         endpoint_id: EndpointId,
-        mut send: SendStream,
-        mut recv: RecvStream,
+        send: &mut SendStream,
+        recv: &mut RecvStream,
     ) -> anyhow::Result<()> {
         let bytes = recv.read_to_end(256).await?;
         let tag = String::from_utf8(bytes)?;
@@ -55,6 +62,9 @@ impl AccessControl {
             return Ok(());
         }
 
-        todo!()
+        self.storage_manager.retrieve(&tag, send).await?;
+        send.finish()?;
+
+        Ok(())
     }
 }
