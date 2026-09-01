@@ -38,12 +38,12 @@ impl AccessListManager {
 
     pub async fn append_access_list(
         &self,
-        tag: &str,
+        resource: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
-        if let Some((doc, mut access_list)) = self.get_access_list(tag, endpoint_id).await? {
+        if let Some((doc, mut access_list)) = self.get_access_list(resource, endpoint_id).await? {
             if access_list.insert(*endpoint_id) {
-                self.insert_bytes(&doc, tag, &access_list).await?;
+                self.insert_bytes(&doc, resource, &access_list).await?;
                 return Ok(true);
             } else {
                 return Ok(false);
@@ -55,7 +55,7 @@ impl AccessListManager {
 
     pub async fn get_access_list(
         &self,
-        tag: &str,
+        resource: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<Option<(Doc, HashSet<EndpointId>)>> {
         let mut stream = self.iroh_instance.docs().list().await?;
@@ -73,7 +73,7 @@ impl AccessListManager {
                     )
                 })?;
 
-            if let Some(access_list) = self.query_for_tag(&doc, tag).await?
+            if let Some(access_list) = self.query_for_tag(&doc, resource).await?
                 && access_list.contains(endpoint_id)
             {
                 return Ok(Some((doc, access_list)));
@@ -86,9 +86,9 @@ impl AccessListManager {
     async fn query_for_tag(
         &self,
         doc: &Doc,
-        tag: &str,
+        resource: &str,
     ) -> anyhow::Result<Option<HashSet<EndpointId>>> {
-        if let Some(entry) = doc.get_one(Query::key_exact(tag).build()).await? {
+        if let Some(entry) = doc.get_one(Query::key_exact(resource).build()).await? {
             match self
                 .iroh_instance
                 .blobs()

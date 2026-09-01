@@ -9,13 +9,12 @@ use decentralized_access_control::{
     protocol::access_control::{self, AccessControl},
     store::storage_manager::StorageManager,
 };
-use iroh::protocol::Router as ARouter;
+use iroh::{EndpointId, protocol::Router as ARouter};
 use iroh_docs::ALPN as DOCS_ALPN;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let iroh_instance = IrohInstance::new(PathBuf::new()).await?;
-    let server_endpoint = iroh_instance.endpoint();
 
     let list_manager = AccessListManager::new(iroh_instance.clone());
     let storage_manager = StorageManager::new(iroh_instance.clone());
@@ -47,12 +46,12 @@ impl AccessControlService {
         Self { access_control }
     }
 
-    pub async fn download_file(&self) {
-
+    pub async fn download_file(&self, tag: &str, file_name: &str, endpoint_id: Option<EndpointId>) {
+        
     }
 }
 
-pub async fn download_handler(
+async fn download_handler(
     Path((user_id, team_id)): Path<(String, String)>,
     State(state): State<Arc<AccessControlService>>
 ) {

@@ -1,3 +1,4 @@
+use anyhow::{Context, bail};
 use iroh::{
     EndpointId,
     endpoint::{RecvStream, SendStream},
@@ -5,7 +6,7 @@ use iroh::{
 };
 use iroh_docs::DocTicket;
 
-use crate::{access_list::list_manager::AccessListManager, store::storage_manager::StorageManager};
+use crate::{access_list::list_manager::AccessListManager, store::storage_manager::{self, StorageManager}};
 
 #[derive(Debug, Clone)]
 pub struct AccessControl {
@@ -44,6 +45,15 @@ impl AccessControl {
         }
     }
 
+    pub async fn make_request(&self, endpoint_id: Option<EndpointId>, tag: &str, filename: &str) {
+        if let Some(endpoint_id) = endpoint_id {
+            self.storage_manager.retreive_remote(endpoint_id, tag, filename).await;
+        }
+        else {
+            self.storage_manager.retrieve_local(tag, filename).await;
+        }
+    }
+
     async fn handle_request(
         &self,
         endpoint_id: EndpointId,
@@ -52,18 +62,22 @@ impl AccessControl {
     ) -> anyhow::Result<()> {
         let bytes = recv.read_to_end(256).await?;
         let tag = String::from_utf8(bytes)?;
+    
+        let resource = tag.split('/').next().context("Resource Invalid format")?;
 
         if self
             .list_manager
-            .get_access_list(&tag, &endpoint_id)
+            .get_access_list(&resource, &endpoint_id)
             .await?
             .is_none()
         {
+            send.write_all(&[Status::Denied as u8]).await?;
             send.finish()?;
-            return Ok(());
+
+            bail!("EndpointId not found inside access list.")
         }
 
-        self.storage_manager.retrieve(&tag, send).await?;
+        self.storage_manager.send(&tag, send).await?;
 
         Ok(())
     }
@@ -75,4 +89,10 @@ impl AccessControl {
     pub async fn import(&self, ticket: DocTicket) {
         todo!()
     }
+}
+
+#[repr(u8)]
+pub enum Status {
+    Denied = 0x00,
+    Allowed = 0x01,
 }
