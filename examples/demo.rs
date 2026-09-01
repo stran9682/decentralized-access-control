@@ -1,11 +1,8 @@
 use std::path::PathBuf;
 
 use decentralized_access_control::{
-    ALPN,
-    access_list::list_manager::AccessListManager,
-    iroh::iroh_instance::IrohInstance,
-    protocol::access_control::AccessControl,
-    store::storage_manager::StorageManager,
+    ALPN, access_list::list_manager::AccessListManager, iroh::iroh_instance::IrohInstance,
+    protocol::access_control::AccessControl, store::storage_manager::StorageManager,
 };
 use iroh::{
     Endpoint,

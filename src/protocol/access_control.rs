@@ -5,8 +5,10 @@ use iroh::{
     protocol::ProtocolHandler,
 };
 use iroh_docs::DocTicket;
+use tempfile::tempfile;
+use tokio::fs::File;
 
-use crate::{access_list::list_manager::AccessListManager, store::storage_manager::{self, StorageManager}};
+use crate::{access_list::list_manager::AccessListManager, store::storage_manager::StorageManager};
 
 #[derive(Debug, Clone)]
 pub struct AccessControl {
@@ -45,13 +47,25 @@ impl AccessControl {
         }
     }
 
-    pub async fn make_request(&self, endpoint_id: Option<EndpointId>, tag: &str, filename: &str) {
+    pub async fn make_request(
+        &self,
+        endpoint_id: Option<EndpointId>,
+        resource: &str,
+        filename: &str,
+    ) -> anyhow::Result<File> {
+        let mut tempfile = tokio::fs::File::from_std(tempfile()?);
+
         if let Some(endpoint_id) = endpoint_id {
-            self.storage_manager.retreive_remote(endpoint_id, tag, filename).await;
+            self.storage_manager
+                .retreive_remote(endpoint_id, resource, filename, &mut tempfile)
+                .await?;
+        } else {
+            self.storage_manager
+                .retrieve_local(resource, filename, &mut tempfile)
+                .await;
         }
-        else {
-            self.storage_manager.retrieve_local(tag, filename).await;
-        }
+
+        Ok(tempfile)
     }
 
     async fn handle_request(
@@ -62,7 +76,7 @@ impl AccessControl {
     ) -> anyhow::Result<()> {
         let bytes = recv.read_to_end(256).await?;
         let tag = String::from_utf8(bytes)?;
-    
+
         let resource = tag.split('/').next().context("Resource Invalid format")?;
 
         if self

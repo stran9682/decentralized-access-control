@@ -2,10 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use iroh::{Endpoint, SecretKey, endpoint::presets};
-use iroh_blobs::{
-    api::Store,
-    store::fs::FsStore,
-};
+use iroh_blobs::{api::Store, store::fs::FsStore};
 use iroh_docs::protocol::Docs;
 use iroh_gossip::Gossip;
 use tokio::io::AsyncWriteExt;

@@ -1,7 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
-use axum::{Router, extract::{Path, State}, routing::get};
+use axum::{
+    Router,
+    body::Body,
+    extract::{Path, State},
+    routing::get,
+};
 use decentralized_access_control::{
     ALPN,
     access_list::list_manager::AccessListManager,
@@ -11,6 +16,7 @@ use decentralized_access_control::{
 };
 use iroh::{EndpointId, protocol::Router as ARouter};
 use iroh_docs::ALPN as DOCS_ALPN;
+use tokio_util::io::ReaderStream;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -46,14 +52,29 @@ impl AccessControlService {
         Self { access_control }
     }
 
-    pub async fn download_file(&self, tag: &str, file_name: &str, endpoint_id: Option<EndpointId>) {
-        
+    pub async fn download_file(
+        &self,
+        resource: &str,
+        filename: &str,
+        endpoint_id: Option<EndpointId>,
+    ) -> anyhow::Result<Body> {
+        let file = self
+            .access_control
+            .make_request(endpoint_id, resource, filename)
+            .await?;
+
+        let stream = ReaderStream::new(file);
+        let body = Body::from_stream(stream);
+
+        Ok(body)
     }
 }
 
 async fn download_handler(
-    Path((user_id, team_id)): Path<(String, String)>,
-    State(state): State<Arc<AccessControlService>>
+    Path((resource, filename)): Path<(String, String)>,
+    State(state): State<Arc<AccessControlService>>,
 ) {
+    state.download_file(&resource, &filename, None).await;
+
     todo!()
 }

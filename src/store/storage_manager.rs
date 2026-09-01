@@ -15,11 +15,15 @@ impl StorageManager {
         Self { iroh_instance }
     }
 
-    pub async fn retrieve_local(&self, resource: &str, filename: &str) {
-        todo!()
-    }   
+    pub async fn retrieve_local(&self, resource: &str, filename: &str, file_writer: &mut File) {}
 
-    pub async fn retreive_remote(&self, endpoint_id: EndpointId, resource: &str, filename: &str) -> anyhow::Result<()> {
+    pub async fn retreive_remote(
+        &self,
+        endpoint_id: EndpointId,
+        resource: &str,
+        filename: &str,
+        file_writer: &mut File,
+    ) -> anyhow::Result<()> {
         let endpoint = self.iroh_instance.endpoint();
 
         let conn = endpoint.connect(endpoint_id, ALPN).await?;
@@ -36,8 +40,12 @@ impl StorageManager {
         if status_buf[0] == (Status::Denied as u8) {
             bail!("Request failed: Accesss was denied")
         }
-        
-        todo!()
+
+        tokio::io::copy(&mut recv, file_writer).await?;
+
+        conn.close(0u32.into(), b"Successfully retrieved file.");
+
+        Ok(())
     }
 
     pub async fn send(&self, tag: &str, send: &mut SendStream) -> anyhow::Result<()> {
@@ -69,7 +77,11 @@ impl StorageManager {
                 if let Err(e) = store
                     .add_stream(stream)
                     .await
-                    .with_named_tag(format!("{}/{}", resource, entry.file_name().to_string_lossy()))
+                    .with_named_tag(format!(
+                        "{}/{}",
+                        resource,
+                        entry.file_name().to_string_lossy()
+                    ))
                     .await
                 {
                     eprintln!("Failed to add to store: {}", e)
