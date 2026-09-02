@@ -15,7 +15,22 @@ impl StorageManager {
         Self { iroh_instance }
     }
 
-    pub async fn retrieve_local(&self, resource: &str, filename: &str, file_writer: &mut File) {}
+    pub async fn retrieve_local(
+        &self,
+        resource: &str,
+        filename: &str,
+        file_writer: &mut File,
+    ) -> anyhow::Result<()> {
+        let tag = format!("{resource}/{filename}");
+
+        if let Some(tag) = self.iroh_instance.blobs().tags().get(tag).await? {
+            let mut reader = self.iroh_instance.blobs().reader(tag.hash);
+            tokio::io::copy(&mut reader, file_writer).await?;
+            Ok(())
+        } else {
+            bail!("Tag not found locally");
+        }
+    }
 
     pub async fn retreive_remote(
         &self,
@@ -65,6 +80,8 @@ impl StorageManager {
 
     pub async fn upload_dir(&self, path: &str, resource: &str) -> anyhow::Result<()> {
         let mut entries = fs::read_dir(path).await?;
+
+        todo!("Hash each file and use root hash as the resource name");
 
         while let Some(entry) = entries.next_entry().await? {
             let file = File::open(entry.path()).await?;

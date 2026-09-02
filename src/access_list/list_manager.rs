@@ -18,7 +18,7 @@ impl AccessListManager {
         Self { iroh_instance }
     }
 
-    pub async fn new_doc(&self, tag: &str, ticket: Option<String>) -> anyhow::Result<Doc> {
+    pub async fn new_doc(&self, resource: &str, ticket: Option<String>) -> anyhow::Result<Doc> {
         let doc = match ticket {
             Some(ticket) => {
                 let ticket = DocTicket::from_str(&ticket)?;
@@ -27,10 +27,10 @@ impl AccessListManager {
             None => self.iroh_instance.docs().create().await?,
         };
 
-        if let Some(access_list) = self.query_for_tag(&doc, tag).await?
+        if let Some(access_list) = self.query_for_tag(&doc, resource).await?
             && access_list.contains(&self.iroh_instance.endpoint().id())
         {
-            self.insert_bytes(&doc, tag, &access_list).await?;
+            self.insert_bytes(&doc, resource, &access_list).await?;
         }
 
         Ok(doc)
@@ -41,7 +41,7 @@ impl AccessListManager {
         resource: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
-        if let Some((doc, mut access_list)) = self.get_access_list(resource, endpoint_id).await? {
+        if let Some((doc, mut access_list)) = self.get_access_list(resource).await? {
             if access_list.insert(*endpoint_id) {
                 self.insert_bytes(&doc, resource, &access_list).await?;
                 return Ok(true);
@@ -56,7 +56,6 @@ impl AccessListManager {
     pub async fn get_access_list(
         &self,
         resource: &str,
-        endpoint_id: &EndpointId,
     ) -> anyhow::Result<Option<(Doc, HashSet<EndpointId>)>> {
         let mut stream = self.iroh_instance.docs().list().await?;
 
@@ -73,9 +72,7 @@ impl AccessListManager {
                     )
                 })?;
 
-            if let Some(access_list) = self.query_for_tag(&doc, resource).await?
-                && access_list.contains(endpoint_id)
-            {
+            if let Some(access_list) = self.query_for_tag(&doc, resource).await? {
                 return Ok(Some((doc, access_list)));
             }
         }
@@ -110,15 +107,15 @@ impl AccessListManager {
     async fn insert_bytes(
         &self,
         doc: &Doc,
-        tag: &str,
+        resource: &str,
         access_list: &HashSet<EndpointId>,
     ) -> anyhow::Result<()> {
         let content = serde_json::to_vec(access_list)?;
-        let tag = String::from(tag);
+        let resource = String::from(resource);
 
         doc.set_bytes(
             self.iroh_instance.docs().author_default().await?,
-            tag.clone(),
+            resource,
             content,
         )
         .await?;

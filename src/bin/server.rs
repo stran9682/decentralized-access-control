@@ -1,21 +1,20 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::Context;
 use axum::{
     Router,
     body::Body,
-    extract::{Path, State},
+    extract::{Query, State},
+    http::header,
     routing::get,
 };
 use decentralized_access_control::{
-    ALPN,
-    access_list::list_manager::AccessListManager,
-    iroh::iroh_instance::IrohInstance,
-    protocol::access_control::{self, AccessControl},
-    store::storage_manager::StorageManager,
+    ALPN, access_list::list_manager::AccessListManager, iroh::iroh_instance::IrohInstance,
+    protocol::access_control::AccessControl, store::storage_manager::StorageManager,
 };
 use iroh::{EndpointId, protocol::Router as ARouter};
 use iroh_docs::ALPN as DOCS_ALPN;
+use serde::Deserialize;
 use tokio_util::io::ReaderStream;
 
 #[tokio::main]
@@ -27,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
 
     let access_control = AccessControl::new(list_manager.clone(), storage_manager);
 
-    let router = ARouter::builder(iroh_instance.endpoint().clone())
+    let _router = ARouter::builder(iroh_instance.endpoint().clone())
         .accept(DOCS_ALPN, iroh_instance.docs().clone())
         .accept(ALPN, access_control.clone())
         .spawn();
@@ -35,12 +34,19 @@ async fn main() -> anyhow::Result<()> {
     let access_control_service = AccessControlService::new(access_control);
 
     let app = Router::new()
-        .route("/{tag}/{filename}", get(download_handler))
+        .route("/", get(download_handler))
         .with_state(Arc::new(access_control_service));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
 
     return axum::serve(listener, app).await.context("Server failed");
+}
+
+#[derive(Deserialize)]
+struct RequestArgs {
+    resource: String,
+    filename: String,
+    endpoint_id: Option<String>,
 }
 
 struct AccessControlService {
@@ -71,10 +77,20 @@ impl AccessControlService {
 }
 
 async fn download_handler(
-    Path((resource, filename)): Path<(String, String)>,
-    State(state): State<Arc<AccessControlService>>,
+    Query(request_args): Query<RequestArgs>,
+    State(access_control_service): State<Arc<AccessControlService>>,
 ) {
-    state.download_file(&resource, &filename, None).await;
+    let endpoint_id = if let Some(endpoint_id) = request_args.endpoint_id {
+        iroh::EndpointId::from_str(&endpoint_id).ok()
+    } else {
+        None
+    };
+
+    let body = access_control_service
+        .download_file(&request_args.resource, &request_args.filename, endpoint_id)
+        .await;
+
+    let headers = [(header::CONTENT_TYPE, "text/plain; charset=utf-8")];
 
     todo!()
 }

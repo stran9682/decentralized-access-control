@@ -7,6 +7,7 @@ use iroh::{
 use iroh_docs::DocTicket;
 use tempfile::tempfile;
 use tokio::fs::File;
+use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::{access_list::list_manager::AccessListManager, store::storage_manager::StorageManager};
 
@@ -62,7 +63,7 @@ impl AccessControl {
         } else {
             self.storage_manager
                 .retrieve_local(resource, filename, &mut tempfile)
-                .await;
+                .await?;
         }
 
         Ok(tempfile)
@@ -77,31 +78,61 @@ impl AccessControl {
         let bytes = recv.read_to_end(256).await?;
         let tag = String::from_utf8(bytes)?;
 
-        let resource = tag.split('/').next().context("Resource Invalid format")?;
+        let resource = tag.split('/').next().context("Invalid tag format")?;
 
-        if self
-            .list_manager
-            .get_access_list(&resource, &endpoint_id)
-            .await?
-            .is_none()
-        {
+        let Some((doc, access_list)) = self.list_manager.get_access_list(&resource).await? else {
             send.write_all(&[Status::Denied as u8]).await?;
             send.finish()?;
+            bail!("Requested access list not found")
+        };
 
+        if !access_list.contains(&endpoint_id) {
+            send.write_all(&[Status::Denied as u8]).await?;
+            send.finish()?;
             bail!("EndpointId not found inside access list.")
         }
 
-        self.storage_manager.send(&tag, send).await?;
+        // If the file is available locally, send it to the requester
+        // when it isn't, check if anyone else has it
+        if self.storage_manager.send(&tag, send).await.is_ok() {
+            return Ok(());
+        }
 
+        let Some(peers) = doc.get_sync_peers().await? else {
+            send.write_all(&[Status::Denied as u8]).await?;
+            send.finish()?;
+            bail!("No available peers to transfer")
+        };
+
+        for bytes in peers {
+            let peer_endpoint = EndpointId::from_bytes(&bytes)?;
+
+            let Ok(file) = self
+                .make_request(Some(peer_endpoint), &resource, &tag[resource.len()..])
+                .await
+            else {
+                continue;
+            };
+
+            let stream = ReaderStream::new(file);
+            let mut stream = StreamReader::new(stream);
+
+            tokio::io::copy(&mut stream, send).await?;
+            send.finish()?;
+            return Ok(())
+        }
+
+        bail!("File not found among peers")
+    }
+
+    pub async fn upload_new(&self, resource: &str, path: &str) -> anyhow::Result<()> {
+        self.storage_manager.upload_dir(path, resource).await?;
+        self.list_manager.new_doc(&resource, None).await?;
         Ok(())
     }
 
-    pub async fn upload_new(&self, tag: &str, path: &str) {
-        todo!()
-    }
-
     pub async fn import(&self, ticket: DocTicket) {
-        todo!()
+        // self.list_manager.new_doc(resource, ticket)
     }
 }
 

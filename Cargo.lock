@@ -666,6 +666,7 @@ dependencies = [
  "iroh-blobs",
  "iroh-docs",
  "iroh-gossip",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
