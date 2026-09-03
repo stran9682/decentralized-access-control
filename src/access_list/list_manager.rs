@@ -77,7 +77,7 @@ impl AccessListManager {
             }
         }
 
-        return Ok(None);
+        Ok(None)
     }
 
     async fn query_for_tag(
@@ -97,7 +97,7 @@ impl AccessListManager {
 
                     Ok(Some(list_members))
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => Err(e.into()),
             }
         } else {
             Ok(None)

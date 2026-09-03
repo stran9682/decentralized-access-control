@@ -31,7 +31,7 @@ impl ProtocolHandler for AccessControl {
                     .handle_request(peer, &mut send, &mut recv)
                     .await
                 {
-                    eprintln!("Error handling request: {}", e)
+                    eprintln!("Error handling request: {e}")
                 }
             });
         }
@@ -80,8 +80,8 @@ impl AccessControl {
 
         let resource = tag.split('/').next().context("Invalid tag format")?;
 
-        let Some((doc, access_list)) = self.list_manager.get_access_list(&resource).await? else {
-            send.write_all(&[Status::Denied as u8]).await?;
+        let Some((doc, access_list)) = self.list_manager.get_access_list(resource).await? else {
+            send.write_all(&[Status::ResourceNotFound as u8]).await?;
             send.finish()?;
             bail!("Requested access list not found")
         };
@@ -94,21 +94,23 @@ impl AccessControl {
 
         // If the file is available locally, send it to the requester
         // when it isn't, check if anyone else has it
-        if self.storage_manager.send(&tag, send).await.is_ok() {
+        if self.storage_manager.send(&tag, send).await? {
+            send.finish()?;
             return Ok(());
         }
 
         let Some(peers) = doc.get_sync_peers().await? else {
-            send.write_all(&[Status::Denied as u8]).await?;
+            send.write_all(&[Status::FileNotFound as u8]).await?;
             send.finish()?;
             bail!("No available peers to transfer")
         };
 
-        for bytes in peers {
-            let peer_endpoint = EndpointId::from_bytes(&bytes)?;
+        todo!("This will infinitely loop if the file isn't found");
+        for peer_bytes in peers {
+            let peer_endpoint = EndpointId::from_bytes(&peer_bytes)?;
 
             let Ok(file) = self
-                .make_request(Some(peer_endpoint), &resource, &tag[resource.len()..])
+                .make_request(Some(peer_endpoint), resource, &tag[resource.len()..])
                 .await
             else {
                 continue;
@@ -126,18 +128,20 @@ impl AccessControl {
     }
 
     pub async fn upload_new(&self, resource: &str, path: &str) -> anyhow::Result<()> {
-        self.storage_manager.upload_dir(path, resource).await?;
-        self.list_manager.new_doc(&resource, None).await?;
+        self.storage_manager.upload_dir(path).await?;
+        self.list_manager.new_doc(resource, None).await?;
         Ok(())
     }
 
     pub async fn import(&self, ticket: DocTicket) {
-        // self.list_manager.new_doc(resource, ticket)
+        todo!("Import the ticket, request the files to backup")
     }
 }
 
 #[repr(u8)]
 pub enum Status {
-    Denied = 0x00,
-    Allowed = 0x01,
+    Denied,
+    Allowed,
+    FileNotFound,
+    ResourceNotFound,
 }

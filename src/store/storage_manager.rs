@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{Context, bail};
 use iroh::{EndpointId, endpoint::SendStream};
 use tokio::fs::{self, File};
 use tokio_util::io::ReaderStream;
@@ -23,13 +23,11 @@ impl StorageManager {
     ) -> anyhow::Result<()> {
         let tag = format!("{resource}/{filename}");
 
-        if let Some(tag) = self.iroh_instance.blobs().tags().get(tag).await? {
-            let mut reader = self.iroh_instance.blobs().reader(tag.hash);
-            tokio::io::copy(&mut reader, file_writer).await?;
-            Ok(())
-        } else {
-            bail!("Tag not found locally");
-        }
+        let tag_info = self.iroh_instance.blobs().tags().get(tag).await?.context("Tag not found locally")?;
+        let mut reader = self.iroh_instance.blobs().reader(tag_info.hash);
+        tokio::io::copy(&mut reader, file_writer).await?;
+
+        Ok(())
     }
 
     pub async fn retreive_remote(
@@ -38,7 +36,7 @@ impl StorageManager {
         resource: &str,
         filename: &str,
         file_writer: &mut File,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let endpoint = self.iroh_instance.endpoint();
 
         let conn = endpoint.connect(endpoint_id, ALPN).await?;
@@ -52,7 +50,7 @@ impl StorageManager {
         let mut status_buf = [0u8; 1];
         recv.read_exact(&mut status_buf).await?;
 
-        if status_buf[0] == (Status::Denied as u8) {
+        if status_buf[0] != (Status::Allowed as u8) {
             bail!("Request failed: Accesss was denied")
         }
 
@@ -60,35 +58,32 @@ impl StorageManager {
 
         conn.close(0u32.into(), b"Successfully retrieved file.");
 
-        Ok(())
+        Ok(true)
     }
 
-    pub async fn send(&self, tag: &str, send: &mut SendStream) -> anyhow::Result<()> {
+    pub async fn send(&self, tag: &str, send: &mut SendStream) -> anyhow::Result<bool> {
         if let Some(tag) = self.iroh_instance.blobs().tags().get(tag).await? {
             send.write_all(&[Status::Allowed as u8]).await?;
             let mut reader = self.iroh_instance.blobs().reader(tag.hash);
             tokio::io::copy(&mut reader, send).await?;
-            send.finish()?;
 
-            Ok(())
+            Ok(true)
         } else {
-            send.write_all(&[Status::Denied as u8]).await?;
-            send.finish()?;
-            bail!("Tag not found")
+            send.write_all(&[Status::FileNotFound as u8]).await?;
+            Ok(false)
         }
     }
 
-    pub async fn upload_dir(&self, path: &str, resource: &str) -> anyhow::Result<()> {
+    pub async fn upload_dir(&self, path: &str) -> anyhow::Result<()> {
         let mut entries = fs::read_dir(path).await?;
-
-        todo!("Hash each file and use root hash as the resource name");
 
         while let Some(entry) = entries.next_entry().await? {
             let file = File::open(entry.path()).await?;
+            // let hash = sha256::digest();
+
             let stream = ReaderStream::new(file);
 
             let store = self.iroh_instance.blobs().clone();
-            let resource = String::from(resource);
 
             tokio::spawn(async move {
                 if let Err(e) = store
@@ -96,7 +91,7 @@ impl StorageManager {
                     .await
                     .with_named_tag(format!(
                         "{}/{}",
-                        resource,
+                        todo!("Merkle Tree root hash"),
                         entry.file_name().to_string_lossy()
                     ))
                     .await
