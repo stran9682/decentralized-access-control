@@ -5,11 +5,14 @@ use iroh::{
     protocol::ProtocolHandler,
 };
 use iroh_docs::DocTicket;
+use serde::{Deserialize, Serialize};
 use tempfile::tempfile;
 use tokio::fs::File;
 use tokio_util::io::{ReaderStream, StreamReader};
 
-use crate::{access_list::list_manager::AccessListManager, store::storage_manager::StorageManager};
+use crate::{
+    Status, access_list::list_manager::AccessListManager, store::storage_manager::StorageManager,
+};
 
 #[derive(Debug, Clone)]
 pub struct AccessControl {
@@ -51,18 +54,17 @@ impl AccessControl {
     pub async fn make_request(
         &self,
         endpoint_id: Option<EndpointId>,
-        resource: &str,
-        filename: &str,
+        request: &Request,
     ) -> anyhow::Result<File> {
         let mut tempfile = tokio::fs::File::from_std(tempfile()?);
 
         if let Some(endpoint_id) = endpoint_id {
             self.storage_manager
-                .retreive_remote(endpoint_id, resource, filename, &mut tempfile)
+                .retreive_remote(endpoint_id, request, &mut tempfile)
                 .await?;
         } else {
             self.storage_manager
-                .retrieve_local(resource, filename, &mut tempfile)
+                .retrieve_local(&request.resource, &request.filename, &mut tempfile)
                 .await?;
         }
 
@@ -75,12 +77,16 @@ impl AccessControl {
         send: &mut SendStream,
         recv: &mut RecvStream,
     ) -> anyhow::Result<()> {
-        let bytes = recv.read_to_end(256).await?;
-        let tag = String::from_utf8(bytes)?;
+        let mut len_buf = [0u8; size_of::<u32>()];
+        recv.read_exact(&mut len_buf).await?;
+        let req_len = u32::from_be_bytes(len_buf);
 
-        let resource = tag.split('/').next().context("Invalid tag format")?;
+        let mut request_bytes = vec![0u8; req_len as usize];
+        recv.read_exact(&mut request_bytes).await?;
+        let mut request: Request = serde_json::from_slice(&request_bytes)?;
 
-        let Some((doc, access_list)) = self.list_manager.get_access_list(resource).await? else {
+        let Some((doc, access_list)) = self.list_manager.get_access_list(&request.resource).await?
+        else {
             send.write_all(&[Status::ResourceNotFound as u8]).await?;
             send.finish()?;
             bail!("Requested access list not found")
@@ -94,37 +100,39 @@ impl AccessControl {
 
         // If the file is available locally, send it to the requester
         // when it isn't, check if anyone else has it
-        if self.storage_manager.send(&tag, send).await? {
+        if self
+            .storage_manager
+            .send(&format!("{}/{}", request.resource, request.filename), send)
+            .await?
+        {
             send.finish()?;
             return Ok(());
         }
 
-        let Some(peers) = doc.get_sync_peers().await? else {
+        if let Some(peers) = doc.get_sync_peers().await?
+            && request.decrement_attempts() > 0
+        {
+            for peer_bytes in peers {
+                let peer_endpoint = EndpointId::from_bytes(&peer_bytes)?;
+
+                let Ok(file) = self.make_request(Some(peer_endpoint), &request).await else {
+                    continue;
+                };
+
+                let stream = ReaderStream::new(file);
+                let mut stream = StreamReader::new(stream);
+
+                tokio::io::copy(&mut stream, send).await?;
+                send.finish()?;
+                return Ok(());
+            }
+
+            bail!("File not found among peers")
+        } else {
             send.write_all(&[Status::FileNotFound as u8]).await?;
             send.finish()?;
             bail!("No available peers to transfer")
-        };
-
-        todo!("This will infinitely loop if the file isn't found");
-        for peer_bytes in peers {
-            let peer_endpoint = EndpointId::from_bytes(&peer_bytes)?;
-
-            let Ok(file) = self
-                .make_request(Some(peer_endpoint), resource, &tag[resource.len()..])
-                .await
-            else {
-                continue;
-            };
-
-            let stream = ReaderStream::new(file);
-            let mut stream = StreamReader::new(stream);
-
-            tokio::io::copy(&mut stream, send).await?;
-            send.finish()?;
-            return Ok(())
         }
-
-        bail!("File not found among peers")
     }
 
     pub async fn upload_new(&self, resource: &str, path: &str) -> anyhow::Result<()> {
@@ -138,10 +146,24 @@ impl AccessControl {
     }
 }
 
-#[repr(u8)]
-pub enum Status {
-    Denied,
-    Allowed,
-    FileNotFound,
-    ResourceNotFound,
+#[derive(Serialize, Deserialize)]
+pub struct Request {
+    retry_attempts: u8,
+    resource: String,
+    filename: String,
+}
+
+impl Request {
+    pub fn new(retry_attempts: u8, resource: String, filename: String) -> Self {
+        Request {
+            retry_attempts,
+            resource,
+            filename,
+        }
+    }
+
+    pub fn decrement_attempts(&mut self) -> u8 {
+        self.retry_attempts -= 1;
+        self.retry_attempts
+    }
 }

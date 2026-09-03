@@ -1,9 +1,12 @@
 use anyhow::{Context, bail};
 use iroh::{EndpointId, endpoint::SendStream};
-use tokio::fs::{self, File};
+use tokio::{
+    fs::{self, File},
+    io::AsyncWriteExt,
+};
 use tokio_util::io::ReaderStream;
 
-use crate::{ALPN, iroh::iroh_instance::IrohInstance, protocol::access_control::Status};
+use crate::{ALPN, Status, iroh::iroh_instance::IrohInstance, protocol::access_control::Request};
 
 #[derive(Debug, Clone)]
 pub struct StorageManager {
@@ -23,7 +26,13 @@ impl StorageManager {
     ) -> anyhow::Result<()> {
         let tag = format!("{resource}/{filename}");
 
-        let tag_info = self.iroh_instance.blobs().tags().get(tag).await?.context("Tag not found locally")?;
+        let tag_info = self
+            .iroh_instance
+            .blobs()
+            .tags()
+            .get(tag)
+            .await?
+            .context("Tag not found locally")?;
         let mut reader = self.iroh_instance.blobs().reader(tag_info.hash);
         tokio::io::copy(&mut reader, file_writer).await?;
 
@@ -33,8 +42,7 @@ impl StorageManager {
     pub async fn retreive_remote(
         &self,
         endpoint_id: EndpointId,
-        resource: &str,
-        filename: &str,
+        request: &Request,
         file_writer: &mut File,
     ) -> anyhow::Result<bool> {
         let endpoint = self.iroh_instance.endpoint();
@@ -43,15 +51,17 @@ impl StorageManager {
 
         let (mut send, mut recv) = conn.open_bi().await?;
 
-        let request = format!("{}/{}", resource, filename);
+        let request_bytes = serde_json::to_vec(request)?;
+        let bytes_len = request_bytes.len() as u32;
 
-        send.write_all(request.as_bytes()).await?;
+        send.write_u32(bytes_len).await?;
+        send.write_all(&request_bytes).await?;
 
         let mut status_buf = [0u8; 1];
         recv.read_exact(&mut status_buf).await?;
 
         if status_buf[0] != (Status::Allowed as u8) {
-            bail!("Request failed: Accesss was denied")
+            return Ok(false);
         }
 
         tokio::io::copy(&mut recv, file_writer).await?;

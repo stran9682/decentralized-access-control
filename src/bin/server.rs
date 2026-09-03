@@ -9,8 +9,11 @@ use axum::{
     routing::get,
 };
 use decentralized_access_control::{
-    ALPN, access_list::list_manager::AccessListManager, iroh::iroh_instance::IrohInstance,
-    protocol::access_control::AccessControl, store::storage_manager::StorageManager,
+    ALPN,
+    access_list::list_manager::AccessListManager,
+    iroh::iroh_instance::IrohInstance,
+    protocol::access_control::{AccessControl, Request},
+    store::storage_manager::StorageManager,
 };
 use iroh::{EndpointId, protocol::Router as ARouter};
 use iroh_docs::ALPN as DOCS_ALPN;
@@ -64,9 +67,11 @@ impl AccessControlService {
         filename: &str,
         endpoint_id: Option<EndpointId>,
     ) -> anyhow::Result<Body> {
+        let request = Request::new(1, String::from(resource), String::from(filename));
+
         let file = self
             .access_control
-            .make_request(endpoint_id, resource, filename)
+            .make_request(endpoint_id, &request)
             .await?;
 
         let stream = ReaderStream::new(file);
