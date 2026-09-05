@@ -1,8 +1,7 @@
 use anyhow::Context;
 use rs_merkle::{Hasher, MerkleTree, algorithms::Sha256};
 
-fn main () -> anyhow::Result<()> {
-
+fn main() -> anyhow::Result<()> {
     let mut leaves: Vec<[u8; 32]> = Vec::new();
     for i in 'a'..'z' {
         leaves.push(Sha256::hash(&[i as u8]));

@@ -36,6 +36,10 @@ impl ProtocolHandler for AccessControl {
                 {
                     eprintln!("Error handling request: {e}")
                 }
+
+                if let Err(e) = send.finish() {
+                    eprintln!("Stream was closed already: {e}")
+                }
             });
         }
 
@@ -88,13 +92,11 @@ impl AccessControl {
         let Some((doc, access_list)) = self.list_manager.get_access_list(&request.resource).await?
         else {
             send.write_all(&[Status::ResourceNotFound as u8]).await?;
-            send.finish()?;
             bail!("Requested access list not found")
         };
 
         if !access_list.contains(&endpoint_id) {
             send.write_all(&[Status::Denied as u8]).await?;
-            send.finish()?;
             bail!("EndpointId not found inside access list.")
         }
 
@@ -102,10 +104,9 @@ impl AccessControl {
         // when it isn't, check if anyone else has it
         if self
             .storage_manager
-            .send(&format!("{}/{}", request.resource, request.filename), send)
+            .send(&request.resource, &request.filename, send)
             .await?
         {
-            send.finish()?;
             return Ok(());
         }
 
@@ -123,20 +124,18 @@ impl AccessControl {
                 let mut stream = StreamReader::new(stream);
 
                 tokio::io::copy(&mut stream, send).await?;
-                send.finish()?;
                 return Ok(());
             }
 
             bail!("File not found among peers")
         } else {
             send.write_all(&[Status::FileNotFound as u8]).await?;
-            send.finish()?;
             bail!("No available peers to transfer")
         }
     }
 
-    pub async fn upload_new(&self, path: &str) -> anyhow::Result<()> {
-        let resource = self.storage_manager.upload_dir(path).await?;
+    pub async fn upload_new(&self, path: &str, video_name: &str) -> anyhow::Result<()> {
+        let resource = self.storage_manager.upload_dir(path, video_name).await?;
         self.list_manager.new_doc(&resource, None).await?;
         Ok(())
     }
