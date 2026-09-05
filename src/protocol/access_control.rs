@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::bail;
 use iroh::{
     EndpointId,
     endpoint::{RecvStream, SendStream},
@@ -135,9 +135,9 @@ impl AccessControl {
         }
     }
 
-    pub async fn upload_new(&self, resource: &str, path: &str) -> anyhow::Result<()> {
-        self.storage_manager.upload_dir(path).await?;
-        self.list_manager.new_doc(resource, None).await?;
+    pub async fn upload_new(&self, path: &str) -> anyhow::Result<()> {
+        let resource = self.storage_manager.upload_dir(path).await?;
+        self.list_manager.new_doc(&resource, None).await?;
         Ok(())
     }
 

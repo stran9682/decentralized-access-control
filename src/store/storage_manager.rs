@@ -1,7 +1,11 @@
-use anyhow::{Context, bail};
+use std::fs::{self, DirEntry};
+
+use anyhow::Context;
 use iroh::{EndpointId, endpoint::SendStream};
+use iroh_blobs::HashAndFormat;
+use rs_merkle::{MerkleTree, algorithms::Sha256};
 use tokio::{
-    fs::{self, File},
+    fs::File,
     io::AsyncWriteExt,
 };
 use tokio_util::io::ReaderStream;
@@ -64,7 +68,11 @@ impl StorageManager {
             return Ok(false);
         }
 
+        todo!("Read Merkle proof");
+
         tokio::io::copy(&mut recv, file_writer).await?;
+
+        todo!("Verify Merkle proof");
 
         conn.close(0u32.into(), b"Successfully retrieved file.");
 
@@ -74,6 +82,9 @@ impl StorageManager {
     pub async fn send(&self, tag: &str, send: &mut SendStream) -> anyhow::Result<bool> {
         if let Some(tag) = self.iroh_instance.blobs().tags().get(tag).await? {
             send.write_all(&[Status::Allowed as u8]).await?;
+
+            todo!("Send Merkle proof");
+            
             let mut reader = self.iroh_instance.blobs().reader(tag.hash);
             tokio::io::copy(&mut reader, send).await?;
 
@@ -84,33 +95,59 @@ impl StorageManager {
         }
     }
 
-    pub async fn upload_dir(&self, path: &str) -> anyhow::Result<()> {
-        let mut entries = fs::read_dir(path).await?;
+    pub async fn upload_dir(&self, path: &str) -> anyhow::Result<String> {
 
-        while let Some(entry) = entries.next_entry().await? {
+        let mut entries: Vec<DirEntry> = fs::read_dir(path)?
+            .map(|file| file.map_err(anyhow::Error::from))
+            .collect::<anyhow::Result<_>>()?;
+        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+        let mut leaves: Vec<[u8; 32]> = Vec::new();
+        let mut hash_formats: Vec<(HashAndFormat, String)> = Vec::new();
+
+        for entry in entries {
             let file = File::open(entry.path()).await?;
-            // let hash = sha256::digest();
+
+            let hash = sha256::async_digest::try_async_digest(entry.path()).await?;
+            let hash_bytes: [u8; 32] = hash.as_bytes().try_into()?;
+            leaves.push(hash_bytes);
 
             let stream = ReaderStream::new(file);
 
-            let store = self.iroh_instance.blobs().clone();
+            let res = self
+                .iroh_instance
+                .blobs()
+                .add_stream(stream)
+                .await
+                .temp_tag()
+                .await?;
 
-            tokio::spawn(async move {
-                if let Err(e) = store
-                    .add_stream(stream)
-                    .await
-                    .with_named_tag(format!(
-                        "{}/{}",
-                        todo!("Merkle Tree root hash"),
-                        entry.file_name().to_string_lossy()
-                    ))
-                    .await
-                {
-                    eprintln!("Failed to add to store: {}", e)
-                }
-            });
+            hash_formats.push((
+                res.hash_and_format(),
+                entry.file_name().to_string_lossy().into_owned(),
+            ));
         }
 
-        Ok(())
+        let merkle_tree = MerkleTree::<Sha256>::from_leaves(&leaves);
+        let merkle_root = merkle_tree
+            .root_hex()
+            .context("Failed to retreive root hash")?;
+
+        for (hash_format, filename) in hash_formats.iter() {
+            self.iroh_instance
+                .blobs()
+                .tags()
+                .set(format!("{merkle_root}/{filename}"), *hash_format)
+                .await?;
+        }
+
+        let leaves_hash = self.iroh_instance.blobs()
+            .add_bytes(leaves.into_flattened())
+            .await?
+            .hash_and_format();
+
+        self.iroh_instance.blobs().tags().set(&merkle_root, leaves_hash).await?;
+
+        Ok(merkle_root)
     }
 }
