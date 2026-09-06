@@ -4,9 +4,10 @@ use iroh::{
     endpoint::{RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
-use iroh_docs::DocTicket;
+use iroh_docs::{DocTicket, Entry, store::Query};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
+use tokio_stream::StreamExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::{
@@ -17,6 +18,7 @@ use crate::{
 pub struct AccessControl {
     list_manager: AccessListManager,
     storage_manager: StorageManager,
+    endpoint_id: EndpointId,
 }
 
 impl ProtocolHandler for AccessControl {
@@ -47,10 +49,15 @@ impl ProtocolHandler for AccessControl {
 }
 
 impl AccessControl {
-    pub fn new(list_manager: AccessListManager, storage_manager: StorageManager) -> Self {
+    pub fn new(
+        list_manager: AccessListManager,
+        storage_manager: StorageManager,
+        endpoint_id: EndpointId,
+    ) -> Self {
         Self {
             list_manager,
             storage_manager,
+            endpoint_id,
         }
     }
 
@@ -138,12 +145,16 @@ impl AccessControl {
 
     pub async fn upload_new(&self, path: &str, video_name: &str) -> anyhow::Result<()> {
         let resource = self.storage_manager.upload_dir(path, video_name).await?;
-        self.list_manager.new_doc(&resource, None).await?;
+        let doc = self.list_manager.new_doc(None).await?;
+        self.list_manager
+            .append_access_list(&doc, &resource, &self.endpoint_id)
+            .await?;
         Ok(())
     }
 
-    pub async fn import(&self, ticket: DocTicket) {
-        todo!("Import the ticket, request the files to backup")
+    pub async fn import(&self, ticket: DocTicket) -> anyhow::Result<()> {
+        self.list_manager.new_doc(Some(ticket.to_string())).await?;
+        Ok(())
     }
 }
 

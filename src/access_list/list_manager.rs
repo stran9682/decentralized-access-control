@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use iroh::EndpointId;
 use iroh_docs::{DocTicket, api::Doc, store::Query};
 use tokio_stream::StreamExt;
@@ -18,7 +18,7 @@ impl AccessListManager {
         Self { iroh_instance }
     }
 
-    pub async fn new_doc(&self, resource: &str, ticket: Option<String>) -> anyhow::Result<Doc> {
+    pub async fn new_doc(&self, ticket: Option<String>) -> anyhow::Result<Doc> {
         let doc = match ticket {
             Some(ticket) => {
                 let ticket = DocTicket::from_str(&ticket)?;
@@ -27,30 +27,26 @@ impl AccessListManager {
             None => self.iroh_instance.docs().create().await?,
         };
 
-        if let Some(access_list) = self.query_for_tag(&doc, resource).await?
-            && access_list.contains(&self.iroh_instance.endpoint().id())
-        {
-            self.insert_bytes(&doc, resource, &access_list).await?;
-        }
-
         Ok(doc)
     }
 
     pub async fn append_access_list(
         &self,
+        doc: &Doc,
         resource: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
-        if let Some((doc, mut access_list)) = self.get_access_list(resource).await? {
-            if access_list.insert(*endpoint_id) {
-                self.insert_bytes(&doc, resource, &access_list).await?;
-                return Ok(true);
-            } else {
-                return Ok(false);
-            }
-        }
+        let mut acl = self
+            .query_for_tag(doc, resource)
+            .await?
+            .unwrap_or_else(|| HashSet::new());
 
-        bail!("Access list associateed with tag not found")
+        if acl.insert(*endpoint_id) {
+            self.insert_bytes(&doc, resource, &acl).await?;
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
     }
 
     pub async fn get_access_list(
