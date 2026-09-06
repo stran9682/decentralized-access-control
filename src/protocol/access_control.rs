@@ -6,7 +6,6 @@ use iroh::{
 };
 use iroh_docs::DocTicket;
 use serde::{Deserialize, Serialize};
-use tempfile::tempfile;
 use tokio::fs::File;
 use tokio_util::io::{ReaderStream, StreamReader};
 
@@ -60,19 +59,22 @@ impl AccessControl {
         endpoint_id: Option<EndpointId>,
         request: &Request,
     ) -> anyhow::Result<File> {
-        let mut tempfile = tokio::fs::File::from_std(tempfile()?);
-
         if let Some(endpoint_id) = endpoint_id {
-            self.storage_manager
-                .retreive_remote(endpoint_id, request, &mut tempfile)
-                .await?;
+            match self
+                .storage_manager
+                .retreive_remote(endpoint_id, request)
+                .await
+            {
+                Ok(Some(file)) => Ok(file),
+                Ok(None) => bail!("Error occurred retrieving file"),
+                Err(e) => bail!("Network occured retrieving file {e}"),
+            }
         } else {
-            self.storage_manager
-                .retrieve_local(&request.resource, &request.filename, &mut tempfile)
-                .await?;
+            return self
+                .storage_manager
+                .retrieve_local(&request.resource, &request.filename)
+                .await;
         }
-
-        Ok(tempfile)
     }
 
     async fn handle_request(
@@ -148,8 +150,8 @@ impl AccessControl {
 #[derive(Serialize, Deserialize)]
 pub struct Request {
     retry_attempts: u8,
-    resource: String,
-    filename: String,
+    pub resource: String,
+    pub filename: String,
 }
 
 impl Request {

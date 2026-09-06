@@ -6,8 +6,9 @@ use std::{
 use anyhow::{Context, bail};
 use iroh::{EndpointId, endpoint::SendStream};
 use iroh_blobs::HashAndFormat;
-use rs_merkle::{MerkleTree, algorithms::Sha256};
+use rs_merkle::{MerkleProof, MerkleTree, algorithms::Sha256};
 use serde::{Deserialize, Serialize};
+use tempfile::tempfile;
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
@@ -26,12 +27,9 @@ impl StorageManager {
         Self { iroh_instance }
     }
 
-    pub async fn retrieve_local(
-        &self,
-        resource: &str,
-        filename: &str,
-        file_writer: &mut File,
-    ) -> anyhow::Result<()> {
+    pub async fn retrieve_local(&self, resource: &str, filename: &str) -> anyhow::Result<File> {
+        let mut file_writer = tokio::fs::File::from_std(tempfile()?);
+
         let tag = format!("{resource}/{filename}");
 
         let tag_info = self
@@ -42,17 +40,18 @@ impl StorageManager {
             .await?
             .context("Tag not found locally")?;
         let mut reader = self.iroh_instance.blobs().reader(tag_info.hash);
-        tokio::io::copy(&mut reader, file_writer).await?;
+        tokio::io::copy(&mut reader, &mut file_writer).await?;
 
-        Ok(())
+        Ok(file_writer)
     }
 
     pub async fn retreive_remote(
         &self,
         endpoint_id: EndpointId,
         request: &Request,
-        file_writer: &mut File,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<Option<File>> {
+        let mut file_writer = tokio::fs::File::from_std(tempfile()?);
+
         let endpoint = self.iroh_instance.endpoint();
 
         let conn = endpoint.connect(endpoint_id, ALPN).await?;
@@ -60,33 +59,45 @@ impl StorageManager {
         let (mut send, mut recv) = conn.open_bi().await?;
 
         let request_bytes = serde_json::to_vec(request)?;
-        let bytes_len = request_bytes.len() as u32;
+        let request_len = request_bytes.len() as u32;
 
-        send.write_u32(bytes_len).await?;
+        send.write_u32(request_len).await?;
         send.write_all(&request_bytes).await?;
 
         let mut status_buf = [0u8; 1];
         recv.read_exact(&mut status_buf).await?;
 
         if status_buf[0] != (Status::Allowed as u8) {
-            return Ok(false);
+            return Ok(None);
         }
 
         let proof_len = recv.read_u32().await?;
-        if proof_len % 32 != 0 {
-            return Ok(false);
-        }
-
         let mut proof_buf = vec![0u8; proof_len as usize];
         recv.read_exact(&mut proof_buf).await?;
 
-        todo!("Verify Merkle proof");
+        let proof: MerkleVerification = serde_json::from_slice(&proof_buf)?;
+        let merkle_proof = MerkleProof::<Sha256>::from_bytes(&proof.merkle_proof)?;
 
-        tokio::io::copy(&mut recv, file_writer).await?;
+        let merkle_root: [u8; 32] = hex::decode(&request.resource)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid Merkle root length"))?;
+
+        let mut file_bytes = Vec::new();
+        recv.read(&mut file_bytes).await?;
+        file_writer.write_all(&file_bytes).await?;
+
+        let hash = sha256::digest(&file_bytes);
+        let hash_bytes: [u8; 32] = hex::decode(&hash)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid hash length"))?;
+
+        if !merkle_proof.verify(merkle_root, &[proof.index], &[hash_bytes], proof.count) {
+            return Ok(None);
+        }
 
         conn.close(0u32.into(), b"Successfully retrieved file.");
 
-        Ok(true)
+        Ok(Some(file_writer))
     }
 
     pub async fn send(
@@ -138,9 +149,10 @@ impl StorageManager {
         for entry in entries {
             let file = File::open(entry.path()).await?;
 
-            todo!("Correctly generate hash");
             let hash = sha256::async_digest::try_async_digest(entry.path()).await?;
-            let hash_bytes: [u8; 32] = hash.as_bytes().try_into()?;
+            let hash_bytes: [u8; 32] = hex::decode(&hash)?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid hash length"))?;
 
             let stream = ReaderStream::new(file);
 
@@ -160,21 +172,9 @@ impl StorageManager {
             .root_hex()
             .context("Failed to retreive root hash")?;
 
-        let tags_api = blobs.tags();
         for (hash_format, filename, _) in hash_formats.iter() {
-            if let Err(e) = tags_api
-                .set(format!("{merkle_root}/{filename}"), *hash_format)
-                .await
-            {
-                match tags_api.delete_prefix(merkle_root).await {
-                    Ok(num_removed) => {
-                        bail!("Failed to set tag, removed {num_removed} in clean up. err: {e}")
-                    }
-                    Err(delete_err) => {
-                        bail!("Failed to clean up tags: {delete_err} after failing to set tag: {e}")
-                    }
-                }
-            }
+            self.set_tag(&merkle_root, Some(filename), *hash_format)
+                .await?;
         }
 
         let metadata = VideoMetadata::new(
@@ -182,16 +182,42 @@ impl StorageManager {
             video_name,
         );
 
-        todo!("Clean up if failure occurs here");
         let leaves_hash = blobs
             .add_slice(&serde_json::to_vec(&metadata)?)
             .temp_tag()
             .await?
             .hash_and_format();
 
-        tags_api.set(&merkle_root, leaves_hash).await?;
+        self.set_tag(&merkle_root, None, leaves_hash).await?;
 
         Ok(merkle_root)
+    }
+
+    async fn set_tag(
+        &self,
+        resource: &str,
+        filename: Option<&str>,
+        value: impl Into<HashAndFormat>,
+    ) -> anyhow::Result<()> {
+        let tags_api = self.iroh_instance.blobs().tags();
+
+        let tag = match filename {
+            Some(filename) => format!("{resource}/{filename}"),
+            None => resource.to_owned(),
+        };
+
+        if let Err(e) = tags_api.set(tag, value).await {
+            match tags_api.delete_prefix(resource).await {
+                Ok(num_removed) => {
+                    bail!("Failed to set tag, removed {num_removed} in clean up. err: {e}")
+                }
+                Err(delete_err) => {
+                    bail!("Failed to clean up tags: {delete_err} after failing to set tag: {e}")
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -229,6 +255,7 @@ impl VideoMetadata {
         Some(MerkleVerification {
             merkle_proof,
             index,
+            count: leaves.len(),
         })
     }
 }
@@ -237,4 +264,5 @@ impl VideoMetadata {
 pub struct MerkleVerification {
     pub merkle_proof: Vec<u8>,
     pub index: usize,
+    pub count: usize,
 }

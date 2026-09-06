@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
 
     let access_control = AccessControl::new(list_manager.clone(), storage_manager);
 
-    let router = Router::builder(iroh_instance.endpoint().clone())
+    let _router = Router::builder(iroh_instance.endpoint().clone())
         .accept(DOCS_ALPN, iroh_instance.docs().clone())
         .accept(ALPN, access_control.clone())
         .spawn();
