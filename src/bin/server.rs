@@ -1,11 +1,11 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-use anyhow::Context;
 use axum::{
     Router,
     body::Body,
     extract::{Query, State},
-    http::header,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
     routing::get,
 };
 use decentralized_access_control::{
@@ -18,6 +18,7 @@ use decentralized_access_control::{
 use iroh::{EndpointId, protocol::Router as ARouter};
 use iroh_docs::ALPN as DOCS_ALPN;
 use serde::Deserialize;
+use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
 #[tokio::main]
@@ -46,7 +47,9 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
 
-    return axum::serve(listener, app).await.context("Server failed");
+    axum::serve(listener, app).await?;
+
+    return Ok(());
 }
 
 #[derive(Deserialize)]
@@ -70,7 +73,7 @@ impl AccessControlService {
         resource: &str,
         filename: &str,
         endpoint_id: Option<EndpointId>,
-    ) -> anyhow::Result<Body> {
+    ) -> anyhow::Result<File> {
         let request = Request::new(1, String::from(resource), String::from(filename));
 
         let file = self
@@ -78,28 +81,41 @@ impl AccessControlService {
             .make_request(endpoint_id, &request)
             .await?;
 
-        let stream = ReaderStream::new(file);
-        let body = Body::from_stream(stream);
-
-        Ok(body)
+        Ok(file)
     }
 }
 
 async fn download_handler(
     Query(request_args): Query<RequestArgs>,
     State(access_control_service): State<Arc<AccessControlService>>,
-) {
+) -> impl IntoResponse {
     let endpoint_id = if let Some(endpoint_id) = request_args.endpoint_id {
         iroh::EndpointId::from_str(&endpoint_id).ok()
     } else {
         None
     };
 
-    let body = access_control_service
+    let file = match access_control_service
         .download_file(&request_args.resource, &request_args.filename, endpoint_id)
-        .await;
+        .await
+    {
+        Ok(file) => file,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("File not found!"))
+                .unwrap();
+        }
+    };
 
-    let headers = [(header::CONTENT_TYPE, "text/plain; charset=utf-8")];
+    let content_type = mime_guess::from_path(&request_args.filename).first_or_octet_stream();
 
-    todo!()
+    let stream = ReaderStream::new(file);
+    let body = Body::from_stream(stream);
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type.as_ref())
+        .body(body)
+        .unwrap()
 }

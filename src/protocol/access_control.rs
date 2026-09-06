@@ -4,10 +4,9 @@ use iroh::{
     endpoint::{RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
-use iroh_docs::{DocTicket, Entry, store::Query};
+use iroh_docs::DocTicket;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
-use tokio_stream::StreamExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::{
