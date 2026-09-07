@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use iroh::EndpointId;
-use iroh_docs::{DocTicket, api::Doc, engine::LiveEvent, store::Query};
+use iroh_docs::{DocTicket, Entry, api::Doc, engine::LiveEvent, store::Query};
 use tokio_stream::StreamExt;
 
 use crate::iroh::iroh_mem_instance::IrohMemInstance;
@@ -22,26 +22,29 @@ impl AccessListManager {
         let doc = match ticket {
             Some(ticket) => {
                 let ticket = DocTicket::from_str(&ticket)?;
-                self.iroh_instance.docs().import(ticket).await?
+                let (doc, mut events) = self
+                    .iroh_instance
+                    .docs()
+                    .import_and_subscribe(ticket)
+                    .await?;
+
+                while let Some(event) = events.next().await {
+                    let event = event?;
+                    match event {
+                        LiveEvent::ContentReady { .. } => {
+                            println!("Finished syncing");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+
+                doc
             }
             None => self.iroh_instance.docs().create().await?,
         };
 
         Ok(doc)
-    }
-
-    pub async fn import_with_events(
-        &self,
-        ticket: DocTicket,
-    ) -> anyhow::Result<(
-        Doc,
-        impl tokio_stream::Stream<Item = anyhow::Result<LiveEvent>>,
-    )> {
-        Ok(self
-            .iroh_instance
-            .docs()
-            .import_and_subscribe(ticket)
-            .await?)
     }
 
     pub async fn append_access_list(
@@ -101,7 +104,13 @@ impl AccessListManager {
         doc: &Doc,
         resource: &str,
     ) -> anyhow::Result<Option<HashSet<EndpointId>>> {
-        if let Some(entry) = doc.get_one(Query::key_exact(resource).build()).await? {
+        let entries = doc.get_many(Query::single_latest_per_key().build()).await?;
+
+        todo!("Find a more elegant solution");
+
+        let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
+        let mut entries = entries.iter_mut();
+        while let Some(Ok(entry)) = entries.next() {
             match self
                 .iroh_instance
                 .blobs()
@@ -110,14 +119,16 @@ impl AccessListManager {
             {
                 Ok(bytes) => {
                     let list_members: HashSet<EndpointId> = serde_json::from_slice(&bytes)?;
-
-                    Ok(Some(list_members))
+                    return Ok(Some(list_members));
                 }
-                Err(e) => Err(e.into()),
+                Err(e) => {
+                    eprint!("Error reading entry: {e}");
+                    break;
+                }
             }
-        } else {
-            Ok(None)
         }
+
+        Ok(None)
     }
 
     async fn insert_bytes(

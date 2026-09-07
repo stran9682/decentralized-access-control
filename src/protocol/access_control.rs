@@ -142,32 +142,32 @@ impl AccessControl {
         // }
     }
 
-    async fn forward_request(
-        &self,
-        endpoint_id: EndpointId,
-        request: &Request,
-        send: &mut SendStream,
-    ) -> anyhow::Result<bool> {
-        let conn = self.endpoint_id;
-        let endpoint = self.storage_manager.endpoint();
-        let connection = endpoint.connect(endpoint_id, crate::ALPN).await?;
-        let (mut upstream_send, mut upstream_recv) = connection.open_bi().await?;
+    // async fn forward_request(
+    //     &self,
+    //     endpoint_id: EndpointId,
+    //     request: &Request,
+    //     send: &mut SendStream,
+    // ) -> anyhow::Result<bool> {
+    //     let conn = self.endpoint_id;
+    //     let endpoint = self.storage_manager.endpoint();
+    //     let connection = endpoint.connect(endpoint_id, crate::ALPN).await?;
+    //     let (mut upstream_send, mut upstream_recv) = connection.open_bi().await?;
 
-        let request_bytes = serde_json::to_vec(request)?;
-        upstream_send.write_u32(request_bytes.len() as u32).await?;
-        upstream_send.write_all(&request_bytes).await?;
+    //     let request_bytes = serde_json::to_vec(request)?;
+    //     upstream_send.write_u32(request_bytes.len() as u32).await?;
+    //     upstream_send.write_all(&request_bytes).await?;
 
-        let mut status = [0u8; 1];
-        upstream_recv.read_exact(&mut status).await?;
-        if status[0] != Status::Allowed as u8 {
-            return Ok(false);
-        }
+    //     let mut status = [0u8; 1];
+    //     upstream_recv.read_exact(&mut status).await?;
+    //     if status[0] != Status::Allowed as u8 {
+    //         return Ok(false);
+    //     }
 
-        send.write_all(&status).await?;
-        tokio::io::copy(&mut upstream_recv, send).await?;
-        let _ = conn;
-        Ok(true)
-    }
+    //     send.write_all(&status).await?;
+    //     tokio::io::copy(&mut upstream_recv, send).await?;
+    //     let _ = conn;
+    //     Ok(true)
+    // }
 
     pub async fn upload_new(&self, path: &str, video_name: &str) -> anyhow::Result<Doc> {
         let resource = self.storage_manager.upload_dir(path, video_name).await?;
@@ -192,18 +192,6 @@ impl AccessControl {
     pub async fn import(&self, ticket: DocTicket) -> anyhow::Result<()> {
         println!("Importing ticket: {}", ticket);
         let doc = self.list_manager.new_doc(Some(ticket.to_string())).await?;
-        let mut events = doc.subscribe().await?;
-
-        while let Some(event) = events.next().await {
-            let event = event?;
-            match event {
-                LiveEvent::ContentReady { .. } => {
-                    println!("Finished syncing");
-                    break;
-                }
-                _ => {}
-            }
-        }
 
         let entries = doc.get_many(Query::single_latest_per_key()).await?;
         let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
