@@ -6,15 +6,15 @@ use iroh::EndpointId;
 use iroh_docs::{DocTicket, api::Doc, store::Query};
 use tokio_stream::StreamExt;
 
-use crate::iroh::iroh_instance::IrohInstance;
+use crate::iroh::{iroh_instance::IrohInstance, iroh_mem_instance::IrohMemInstance};
 
 #[derive(Debug, Clone)]
 pub struct AccessListManager {
-    iroh_instance: IrohInstance,
+    iroh_instance: IrohMemInstance,
 }
 
 impl AccessListManager {
-    pub fn new(iroh_instance: IrohInstance) -> Self {
+    pub fn new(iroh_instance: IrohMemInstance) -> Self {
         Self { iroh_instance }
     }
 
@@ -36,10 +36,14 @@ impl AccessListManager {
         resource: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
+        println!("Retreiving list");
+
         let mut acl = self
             .query_for_tag(doc, resource)
             .await?
             .unwrap_or_else(|| HashSet::new());
+
+        println!("Retreived list");
 
         if acl.insert(*endpoint_id) {
             self.insert_bytes(&doc, resource, &acl).await?;
@@ -69,6 +73,12 @@ impl AccessListManager {
                 })?;
 
             if let Some(access_list) = self.query_for_tag(&doc, resource).await? {
+                println!("Access list:");
+
+                for (i, peer) in access_list.iter().enumerate() {
+                    println!("{i}: {peer}")
+                }
+
                 return Ok(Some((doc, access_list)));
             }
         }
@@ -106,9 +116,11 @@ impl AccessListManager {
         resource: &str,
         access_list: &HashSet<EndpointId>,
     ) -> anyhow::Result<()> {
+        println!("Seralizing list");
         let content = serde_json::to_vec(access_list)?;
         let resource = String::from(resource);
 
+        println!("Updating list");
         doc.set_bytes(
             self.iroh_instance.docs().author_default().await?,
             resource,
@@ -116,6 +128,7 @@ impl AccessListManager {
         )
         .await?;
 
+        println!("Updated list");
         Ok(())
     }
 }

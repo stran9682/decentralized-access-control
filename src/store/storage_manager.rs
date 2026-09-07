@@ -15,15 +15,19 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
-use crate::{ALPN, Status, iroh::iroh_instance::IrohInstance, protocol::access_control::Request};
+use crate::{
+    ALPN, Status,
+    iroh::{iroh_instance::IrohInstance, iroh_mem_instance::IrohMemInstance},
+    protocol::access_control::Request,
+};
 
 #[derive(Debug, Clone)]
 pub struct StorageManager {
-    iroh_instance: IrohInstance,
+    iroh_instance: IrohMemInstance,
 }
 
 impl StorageManager {
-    pub fn new(iroh_instance: IrohInstance) -> Self {
+    pub fn new(iroh_instance: IrohMemInstance) -> Self {
         Self { iroh_instance }
     }
 
@@ -82,8 +86,7 @@ impl StorageManager {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid Merkle root length"))?;
 
-        let mut file_bytes = Vec::new();
-        recv.read(&mut file_bytes).await?;
+        let file_bytes = recv.read_to_end(usize::MAX).await?;
         file_writer.write_all(&file_bytes).await?;
 
         let hash = sha256::digest(&file_bytes);
@@ -107,17 +110,20 @@ impl StorageManager {
         send: &mut SendStream,
     ) -> anyhow::Result<bool> {
         let Some(proof_tag) = self.iroh_instance.blobs().tags().get(resource).await? else {
+            println!("Tag not found");
             send.write_all(&[Status::ResourceNotFound as u8]).await?;
             return Ok(false);
         };
 
         let tag = format!("{resource}/{filename}");
         let Some(file_tag) = self.iroh_instance.blobs().tags().get(tag).await? else {
+            println!("File not found");
             send.write_all(&[Status::FileNotFound as u8]).await?;
             return Ok(false);
         };
 
         send.write_all(&[Status::Allowed as u8]).await?;
+        println!("Accepted");
 
         let metadata_bytes = self.iroh_instance.blobs().get_bytes(proof_tag.hash).await?;
         let metadata: VideoMetadata = serde_json::from_slice(&metadata_bytes)?;
@@ -131,6 +137,7 @@ impl StorageManager {
         send.write_u32(proof_bytes.len() as u32).await?;
         send.write_all(&proof_bytes).await?;
 
+        println!("Sending file");
         let mut reader = self.iroh_instance.blobs().reader(file_tag.hash);
         tokio::io::copy(&mut reader, send).await?;
 
@@ -246,7 +253,10 @@ impl VideoMetadata {
             return None;
         };
 
-        let leaves: Vec<[u8; 32]> = self.clip_hashes.values().map(|x| x.1).collect();
+        let mut leaves = vec![[0u8; 32]; self.clip_hashes.len()];
+        for (index, leaf) in self.clip_hashes.values() {
+            leaves[*index] = *leaf;
+        }
 
         let merkle_tree = MerkleTree::<Sha256>::from_leaves(&leaves);
 

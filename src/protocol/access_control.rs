@@ -1,12 +1,15 @@
+use std::time::Duration;
+
 use anyhow::bail;
 use iroh::{
     EndpointId,
     endpoint::{RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
-use iroh_docs::DocTicket;
+use iroh_docs::{ContentStatus, DocTicket, Entry, engine::LiveEvent, store::Query};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
+use tokio_stream::StreamExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::{
@@ -65,7 +68,10 @@ impl AccessControl {
         endpoint_id: Option<EndpointId>,
         request: &Request,
     ) -> anyhow::Result<File> {
+        println!("Handling a request");
         if let Some(endpoint_id) = endpoint_id {
+            println!("Making request to: {}", endpoint_id);
+
             match self
                 .storage_manager
                 .retreive_remote(endpoint_id, request)
@@ -148,11 +154,48 @@ impl AccessControl {
         self.list_manager
             .append_access_list(&doc, &resource, &self.endpoint_id)
             .await?;
+
+        let ticket = doc
+            .share(
+                iroh_docs::api::protocol::ShareMode::Write,
+                Default::default(),
+            )
+            .await?;
+
+        println!("Ticket: {}", ticket);
+        println!("Resource: {}", resource);
+
         Ok(())
     }
 
     pub async fn import(&self, ticket: DocTicket) -> anyhow::Result<()> {
-        self.list_manager.new_doc(Some(ticket.to_string())).await?;
+        println!("Importing ticket: {}", ticket);
+        let doc = self.list_manager.new_doc(Some(ticket.to_string())).await?;
+
+        todo!("There's a sync issue here, where the doc refuses to sync.");
+        while let Some(Ok(event)) = doc.subscribe().await?.next().await {
+            match event {
+                LiveEvent::ContentReady { .. } => {
+                    println!("Finished syncing");
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let entries = doc.get_many(Query::single_latest_per_key()).await?;
+        let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
+        let mut entries = entries.iter_mut();
+        while let Some(Ok(entry)) = entries.next() {
+            let resource = String::from_utf8(entry.key().to_vec())?;
+
+            println!("Appending to: {}", resource);
+
+            self.list_manager
+                .append_access_list(&doc, &resource, &self.endpoint_id)
+                .await?;
+        }
+
         Ok(())
     }
 }

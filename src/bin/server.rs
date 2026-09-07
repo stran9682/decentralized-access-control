@@ -11,7 +11,7 @@ use axum::{
 use decentralized_access_control::{
     ALPN,
     access_list::list_manager::AccessListManager,
-    iroh::iroh_instance::IrohInstance,
+    iroh::{iroh_instance::IrohInstance, iroh_mem_instance::IrohMemInstance},
     protocol::access_control::{AccessControl, Request},
     store::storage_manager::StorageManager,
 };
@@ -23,7 +23,8 @@ use tokio_util::io::ReaderStream;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let iroh_instance = IrohInstance::new(PathBuf::new()).await?;
+    // let iroh_instance = IrohInstance::new(PathBuf::new()).await?;
+    let iroh_instance = IrohMemInstance::new().await?;
 
     let list_manager = AccessListManager::new(iroh_instance.clone());
     let storage_manager = StorageManager::new(iroh_instance.clone());
