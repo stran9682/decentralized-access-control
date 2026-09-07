@@ -15,8 +15,10 @@ use decentralized_access_control::{
     protocol::access_control::{AccessControl, Request},
     store::storage_manager::StorageManager,
 };
-use iroh::{EndpointId, protocol::Router as ARouter};
-use iroh_docs::ALPN as DOCS_ALPN;
+use iroh::{Endpoint, EndpointId, endpoint::presets, protocol::Router as ARouter};
+use iroh_blobs::store::mem::MemStore;
+use iroh_docs::{ALPN as DOCS_ALPN, protocol::Docs};
+use iroh_gossip::Gossip;
 use serde::Deserialize;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
@@ -24,7 +26,15 @@ use tokio_util::io::ReaderStream;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // let iroh_instance = IrohInstance::new(PathBuf::new()).await?;
-    let iroh_instance = IrohMemInstance::new().await?;
+    let endpoint = Endpoint::bind(presets::N0).await?;
+    let blobs = MemStore::new();
+    let gossip = Gossip::builder().spawn(endpoint.clone());
+
+    let docs = Docs::memory()
+        .spawn(endpoint.clone(), (*blobs).clone(), gossip)
+        .await?;
+
+    let iroh_instance = IrohMemInstance::new(blobs, docs, endpoint);
 
     let list_manager = AccessListManager::new(iroh_instance.clone());
     let storage_manager = StorageManager::new(iroh_instance.clone());

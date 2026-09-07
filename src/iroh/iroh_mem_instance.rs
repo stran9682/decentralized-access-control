@@ -1,7 +1,6 @@
-use iroh::{Endpoint, endpoint::presets};
+use iroh::Endpoint;
 use iroh_blobs::store::mem::MemStore;
 use iroh_docs::protocol::Docs;
-use iroh_gossip::Gossip;
 
 #[derive(Debug, Clone)]
 pub struct IrohMemInstance {
@@ -11,20 +10,12 @@ pub struct IrohMemInstance {
 }
 
 impl IrohMemInstance {
-    pub async fn new() -> anyhow::Result<Self> {
-        let endpoint = Endpoint::bind(presets::N0).await?;
-        let blobs = MemStore::new();
-        let gossip = Gossip::builder().spawn(endpoint.clone());
-
-        let docs = Docs::memory()
-            .spawn(endpoint.clone(), (*blobs).clone(), gossip)
-            .await?;
-
-        Ok(Self {
-            store: blobs,
+    pub fn new(store: MemStore, docs: Docs, endpoint: Endpoint) -> Self {
+        Self {
+            store,
             docs,
             endpoint,
-        })
+        }
     }
 }
 

@@ -31,6 +31,10 @@ impl StorageManager {
         Self { iroh_instance }
     }
 
+    pub fn endpoint(&self) -> &iroh::Endpoint {
+        self.iroh_instance.endpoint()
+    }
+
     pub async fn retrieve_local(&self, resource: &str, filename: &str) -> anyhow::Result<File> {
         let mut file_writer = tokio::fs::File::from_std(tempfile()?);
 
@@ -110,15 +114,15 @@ impl StorageManager {
         send: &mut SendStream,
     ) -> anyhow::Result<bool> {
         let Some(proof_tag) = self.iroh_instance.blobs().tags().get(resource).await? else {
-            println!("Tag not found");
+            eprintln!("Tag not found");
             send.write_all(&[Status::ResourceNotFound as u8]).await?;
-            return Ok(false);
+            bail!("Tag not found")
         };
 
         let tag = format!("{resource}/{filename}");
         let Some(file_tag) = self.iroh_instance.blobs().tags().get(tag).await? else {
             println!("File not found");
-            send.write_all(&[Status::FileNotFound as u8]).await?;
+            // send.write_all(&[Status::FileNotFound as u8]).await?;
             return Ok(false);
         };
 

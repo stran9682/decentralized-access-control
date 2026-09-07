@@ -1,4 +1,4 @@
-use std::{env, str::FromStr};
+use std::{env, str::FromStr, time::Duration};
 
 use anyhow::bail;
 use decentralized_access_control::{
@@ -8,12 +8,22 @@ use decentralized_access_control::{
     protocol::access_control::{AccessControl, Request},
     store::storage_manager::StorageManager,
 };
-use iroh::{EndpointId, protocol::Router as ARouter};
-use iroh_docs::{ALPN as DOCS_ALPN, DocTicket};
+use iroh::{EndpointId, endpoint::presets, protocol::Router as ARouter};
+use iroh_blobs::{ALPN as BLOBS_ALPN, BlobsProtocol, store::mem::MemStore};
+use iroh_docs::{ALPN as DOCS_ALPN, DocTicket, protocol::Docs};
+use iroh_gossip::{ALPN as GOSSIP_ALPN, Gossip};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let iroh_instance = IrohMemInstance::new().await?;
+    let endpoint = iroh::Endpoint::bind(presets::N0).await?;
+    let blobs = MemStore::new();
+    let gossip = Gossip::builder().spawn(endpoint.clone());
+
+    let docs = Docs::memory()
+        .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
+        .await?;
+
+    let iroh_instance = IrohMemInstance::new(blobs.clone(), docs, endpoint);
 
     let list_manager = AccessListManager::new(iroh_instance.clone());
     let storage_manager = StorageManager::new(iroh_instance.clone());
@@ -27,6 +37,8 @@ async fn main() -> anyhow::Result<()> {
     let _router = ARouter::builder(iroh_instance.endpoint().clone())
         .accept(DOCS_ALPN, iroh_instance.docs().clone())
         .accept(ALPN, access_control.clone())
+        .accept(GOSSIP_ALPN, gossip)
+        .accept(BLOBS_ALPN, BlobsProtocol::new(&blobs, None))
         .spawn();
 
     let args: Vec<String> = env::args().collect();
@@ -40,10 +52,15 @@ async fn main() -> anyhow::Result<()> {
 
     let request = Request::new(1, args[2].clone(), "playlist.m3u8".to_string());
 
-    println!("Making a request");
-    access_control
+    while let Err(e) = access_control
         .make_request(Some(EndpointId::from_str(&args[1])?), &request)
-        .await?;
+        .await
+    {
+        eprintln!("Error retreiving file: {}", e);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+
+    println!("Successfully retrieved file");
 
     tokio::signal::ctrl_c().await?;
 

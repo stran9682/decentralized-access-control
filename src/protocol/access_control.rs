@@ -4,9 +4,9 @@ use iroh::{
     endpoint::{RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
-use iroh_docs::{DocTicket, Entry, api::Doc, engine::LiveEvent, store::Query};
+use iroh_docs::{ContentStatus, DocTicket, Entry, api::Doc, engine::LiveEvent, store::Query};
 use serde::{Deserialize, Serialize};
-use tokio::fs::File;
+use tokio::{fs::File, io::AsyncWriteExt};
 use tokio_stream::StreamExt;
 use tokio_util::io::{ReaderStream, StreamReader};
 
@@ -66,7 +66,6 @@ impl AccessControl {
         endpoint_id: Option<EndpointId>,
         request: &Request,
     ) -> anyhow::Result<File> {
-        println!("Handling a request");
         if let Some(endpoint_id) = endpoint_id {
             println!("Making request to: {}", endpoint_id);
 
@@ -122,28 +121,52 @@ impl AccessControl {
             return Ok(());
         }
 
-        if let Some(peers) = doc.get_sync_peers().await?
-            && request.decrement_attempts() > 0
-        {
-            for peer_bytes in peers {
-                let peer_endpoint = EndpointId::from_bytes(&peer_bytes)?;
+        todo!("Fix up getting file from another peer");
 
-                let Ok(file) = self.make_request(Some(peer_endpoint), &request).await else {
-                    continue;
-                };
+        // if let Some(peers) = doc.get_sync_peers().await?
+        //     && request.retry_attempts > 0
+        // {
+        //     request.decrement_attempts();
+        //     for peer_bytes in peers {
+        //         let peer_endpoint = EndpointId::from_bytes(&peer_bytes)?;
 
-                let stream = ReaderStream::new(file);
-                let mut stream = StreamReader::new(stream);
+        //         if self.forward_request(peer_endpoint, &request, send).await? {
+        //             return Ok(());
+        //         }
+        //     }
 
-                tokio::io::copy(&mut stream, send).await?;
-                return Ok(());
-            }
+        //     bail!("File not found among peers")
+        // } else {
+        //     send.write_all(&[Status::FileNotFound as u8]).await?;
+        //     bail!("No available peers to transfer")
+        // }
+    }
 
-            bail!("File not found among peers")
-        } else {
-            send.write_all(&[Status::FileNotFound as u8]).await?;
-            bail!("No available peers to transfer")
+    async fn forward_request(
+        &self,
+        endpoint_id: EndpointId,
+        request: &Request,
+        send: &mut SendStream,
+    ) -> anyhow::Result<bool> {
+        let conn = self.endpoint_id;
+        let endpoint = self.storage_manager.endpoint();
+        let connection = endpoint.connect(endpoint_id, crate::ALPN).await?;
+        let (mut upstream_send, mut upstream_recv) = connection.open_bi().await?;
+
+        let request_bytes = serde_json::to_vec(request)?;
+        upstream_send.write_u32(request_bytes.len() as u32).await?;
+        upstream_send.write_all(&request_bytes).await?;
+
+        let mut status = [0u8; 1];
+        upstream_recv.read_exact(&mut status).await?;
+        if status[0] != Status::Allowed as u8 {
+            return Ok(false);
         }
+
+        send.write_all(&status).await?;
+        tokio::io::copy(&mut upstream_recv, send).await?;
+        let _ = conn;
+        Ok(true)
     }
 
     pub async fn upload_new(&self, path: &str, video_name: &str) -> anyhow::Result<Doc> {
@@ -168,9 +191,9 @@ impl AccessControl {
 
     pub async fn import(&self, ticket: DocTicket) -> anyhow::Result<()> {
         println!("Importing ticket: {}", ticket);
-        let (doc, mut events) = self.list_manager.import_with_events(ticket).await?;
+        let doc = self.list_manager.new_doc(Some(ticket.to_string())).await?;
+        let mut events = doc.subscribe().await?;
 
-        todo!("Doc isn't syncing");
         while let Some(event) = events.next().await {
             let event = event?;
             match event {
@@ -216,7 +239,7 @@ impl Request {
     }
 
     pub fn decrement_attempts(&mut self) -> u8 {
-        self.retry_attempts -= 1;
+        self.retry_attempts = self.retry_attempts.saturating_sub(1);
         self.retry_attempts
     }
 }

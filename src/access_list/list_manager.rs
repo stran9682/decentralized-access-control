@@ -50,14 +50,10 @@ impl AccessListManager {
         resource: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
-        println!("Retreiving list");
-
         let mut acl = self
             .query_for_tag(doc, resource)
             .await?
             .unwrap_or_else(|| HashSet::new());
-
-        println!("Retreived list");
 
         if acl.insert(*endpoint_id) {
             self.insert_bytes(&doc, resource, &acl).await?;
@@ -130,11 +126,9 @@ impl AccessListManager {
         resource: &str,
         access_list: &HashSet<EndpointId>,
     ) -> anyhow::Result<()> {
-        println!("Seralizing list");
         let content = serde_json::to_vec(access_list)?;
         let resource = String::from(resource);
 
-        println!("Updating list");
         doc.set_bytes(
             self.iroh_instance.docs().author_default().await?,
             resource,
