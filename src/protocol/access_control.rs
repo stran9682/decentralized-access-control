@@ -1,12 +1,10 @@
-use std::time::Duration;
-
 use anyhow::bail;
 use iroh::{
     EndpointId,
     endpoint::{RecvStream, SendStream},
     protocol::ProtocolHandler,
 };
-use iroh_docs::{ContentStatus, DocTicket, Entry, engine::LiveEvent, store::Query};
+use iroh_docs::{DocTicket, Entry, api::Doc, engine::LiveEvent, store::Query};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio_stream::StreamExt;
@@ -148,7 +146,7 @@ impl AccessControl {
         }
     }
 
-    pub async fn upload_new(&self, path: &str, video_name: &str) -> anyhow::Result<()> {
+    pub async fn upload_new(&self, path: &str, video_name: &str) -> anyhow::Result<Doc> {
         let resource = self.storage_manager.upload_dir(path, video_name).await?;
         let doc = self.list_manager.new_doc(None).await?;
         self.list_manager
@@ -165,15 +163,16 @@ impl AccessControl {
         println!("Ticket: {}", ticket);
         println!("Resource: {}", resource);
 
-        Ok(())
+        Ok(doc)
     }
 
     pub async fn import(&self, ticket: DocTicket) -> anyhow::Result<()> {
         println!("Importing ticket: {}", ticket);
-        let doc = self.list_manager.new_doc(Some(ticket.to_string())).await?;
+        let (doc, mut events) = self.list_manager.import_with_events(ticket).await?;
 
-        todo!("There's a sync issue here, where the doc refuses to sync.");
-        while let Some(Ok(event)) = doc.subscribe().await?.next().await {
+        todo!("Doc isn't syncing");
+        while let Some(event) = events.next().await {
+            let event = event?;
             match event {
                 LiveEvent::ContentReady { .. } => {
                     println!("Finished syncing");

@@ -3,10 +3,10 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use iroh::EndpointId;
-use iroh_docs::{DocTicket, api::Doc, store::Query};
+use iroh_docs::{DocTicket, api::Doc, engine::LiveEvent, store::Query};
 use tokio_stream::StreamExt;
 
-use crate::iroh::{iroh_instance::IrohInstance, iroh_mem_instance::IrohMemInstance};
+use crate::iroh::iroh_mem_instance::IrohMemInstance;
 
 #[derive(Debug, Clone)]
 pub struct AccessListManager {
@@ -28,6 +28,20 @@ impl AccessListManager {
         };
 
         Ok(doc)
+    }
+
+    pub async fn import_with_events(
+        &self,
+        ticket: DocTicket,
+    ) -> anyhow::Result<(
+        Doc,
+        impl tokio_stream::Stream<Item = anyhow::Result<LiveEvent>>,
+    )> {
+        Ok(self
+            .iroh_instance
+            .docs()
+            .import_and_subscribe(ticket)
+            .await?)
     }
 
     pub async fn append_access_list(

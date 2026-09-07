@@ -1,8 +1,11 @@
 use decentralized_access_control::{
-    ALPN, access_list::list_manager::AccessListManager, iroh::iroh_mem_instance::IrohMemInstance,
-    protocol::access_control::AccessControl, store::storage_manager::StorageManager,
+    ALPN,
+    access_list::list_manager::{self, AccessListManager},
+    iroh::iroh_mem_instance::IrohMemInstance,
+    protocol::access_control::AccessControl,
+    store::storage_manager::StorageManager,
 };
-use iroh::protocol::Router as ARouter;
+use iroh::{EndpointId, protocol::Router as ARouter};
 use iroh_docs::ALPN as DOCS_ALPN;
 
 #[tokio::main]
@@ -25,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         .accept(ALPN, access_control.clone())
         .spawn();
 
-    access_control.upload_new("demo_vid", "funny video").await?;
+    let doc = access_control.upload_new("demo_vid", "funny video").await?;
 
     tokio::signal::ctrl_c().await?;
 
