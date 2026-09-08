@@ -10,30 +10,34 @@ use iroh_gossip::{ALPN as GOSSIP_ALPN, Gossip};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let endpoint = Endpoint::bind(presets::N0).await?;
-    let blobs = MemStore::new();
+    let access_list_blobs = MemStore::new();
     let gossip = Gossip::builder().spawn(endpoint.clone());
 
     let docs = Docs::memory()
-        .spawn(endpoint.clone(), (*blobs).clone(), gossip.clone())
+        .spawn(
+            endpoint.clone(),
+            (*access_list_blobs).clone(),
+            gossip.clone(),
+        )
         .await?;
 
-    let iroh_instance = IrohMemInstance::new(blobs.clone(), docs.clone(), endpoint);
+    let acl_iroh_instance =
+        IrohMemInstance::new(access_list_blobs.clone(), docs.clone(), endpoint.clone());
 
-    let list_manager = AccessListManager::new(iroh_instance.clone());
-    let storage_manager = StorageManager::new(iroh_instance.clone());
+    let list_manager = AccessListManager::new(acl_iroh_instance);
 
-    let access_control = AccessControl::new(
-        list_manager.clone(),
-        storage_manager,
-        iroh_instance.endpoint().id(),
-    );
+    let storage_blobs = MemStore::new();
+    let storage_iroh_instance = IrohMemInstance::new(storage_blobs, docs.clone(), endpoint.clone());
+    let storage_manager = StorageManager::new(storage_iroh_instance);
 
-    println!("Endpoint: {}", iroh_instance.endpoint().id());
+    let access_control = AccessControl::new(list_manager.clone(), storage_manager, endpoint.id());
 
-    let _router = ARouter::builder(iroh_instance.endpoint().clone())
-        .accept(DOCS_ALPN, iroh_instance.docs().clone())
+    println!("Endpoint: {}", endpoint.id());
+
+    let _router = ARouter::builder(endpoint)
+        .accept(DOCS_ALPN, docs)
         .accept(GOSSIP_ALPN, gossip)
-        .accept(BLOBS_ALPN, BlobsProtocol::new(&blobs, None))
+        .accept(BLOBS_ALPN, BlobsProtocol::new(&access_list_blobs, None))
         .accept(ALPN, access_control.clone())
         .spawn();
 

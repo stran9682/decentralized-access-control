@@ -105,11 +105,9 @@ impl AccessListManager {
         resource: &str,
     ) -> anyhow::Result<Option<HashSet<EndpointId>>> {
         let entries = doc.get_many(Query::single_latest_per_key().build()).await?;
-
-        todo!("Find a more elegant solution");
-
         let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
         let mut entries = entries.iter_mut();
+
         while let Some(Ok(entry)) = entries.next() {
             match self
                 .iroh_instance
@@ -118,12 +116,13 @@ impl AccessListManager {
                 .await
             {
                 Ok(bytes) => {
-                    let list_members: HashSet<EndpointId> = serde_json::from_slice(&bytes)?;
-                    return Ok(Some(list_members));
+                    if resource == String::from_utf8(entry.key().to_vec())? {
+                        let list_members: HashSet<EndpointId> = serde_json::from_slice(&bytes)?;
+                        return Ok(Some(list_members));
+                    }
                 }
                 Err(e) => {
-                    eprint!("Error reading entry: {e}");
-                    break;
+                    eprintln!("Error reading entry: {e}");
                 }
             }
         }

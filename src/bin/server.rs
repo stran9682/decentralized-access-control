@@ -84,8 +84,8 @@ impl AccessControlService {
         resource: &str,
         filename: &str,
         endpoint_id: Option<EndpointId>,
-    ) -> anyhow::Result<File> {
-        let request = Request::new(1, String::from(resource), String::from(filename));
+    ) -> anyhow::Result<Option<File>> {
+        let request = Request::new(String::from(resource), String::from(filename));
 
         let file = self
             .access_control
@@ -110,11 +110,19 @@ async fn download_handler(
         .download_file(&request_args.resource, &request_args.filename, endpoint_id)
         .await
     {
-        Ok(file) => file,
-        Err(_) => {
+        Ok(Some(file)) => file,
+        Ok(None) => {
+            return Response::builder()
+                .status(StatusCode::FORBIDDEN)
+                .body(Body::from(
+                    "Permission error or file hash didn't match resource",
+                ))
+                .unwrap();
+        }
+        Err(e) => {
             return Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(Body::from("File not found!"))
+                .body(Body::from(format!("Network error occured, {e}")))
                 .unwrap();
         }
     };

@@ -76,6 +76,11 @@ impl StorageManager {
         recv.read_exact(&mut status_buf).await?;
 
         if status_buf[0] != (Status::Allowed as u8) {
+            eprintln!(
+                "Failed to retrieve file: {:?}",
+                Status::try_from(status_buf[0]).unwrap_or(Status::UnknownError)
+            );
+
             return Ok(None);
         }
 
@@ -90,6 +95,7 @@ impl StorageManager {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid Merkle root length"))?;
 
+        // this is being loaded all into memory
         let file_bytes = recv.read_to_end(usize::MAX).await?;
         file_writer.write_all(&file_bytes).await?;
 
@@ -113,7 +119,7 @@ impl StorageManager {
         filename: &str,
         send: &mut SendStream,
     ) -> anyhow::Result<bool> {
-        let Some(proof_tag) = self.iroh_instance.blobs().tags().get(resource).await? else {
+        let Some(metadata_tag) = self.iroh_instance.blobs().tags().get(resource).await? else {
             eprintln!("Tag not found");
             send.write_all(&[Status::ResourceNotFound as u8]).await?;
             bail!("Tag not found")
@@ -121,7 +127,7 @@ impl StorageManager {
 
         let tag = format!("{resource}/{filename}");
         let Some(file_tag) = self.iroh_instance.blobs().tags().get(tag).await? else {
-            println!("File not found");
+            eprintln!("File not found");
             // send.write_all(&[Status::FileNotFound as u8]).await?;
             return Ok(false);
         };
@@ -129,7 +135,11 @@ impl StorageManager {
         send.write_all(&[Status::Allowed as u8]).await?;
         println!("Accepted");
 
-        let metadata_bytes = self.iroh_instance.blobs().get_bytes(proof_tag.hash).await?;
+        let metadata_bytes = self
+            .iroh_instance
+            .blobs()
+            .get_bytes(metadata_tag.hash)
+            .await?;
         let metadata: VideoMetadata = serde_json::from_slice(&metadata_bytes)?;
 
         let proof = metadata
