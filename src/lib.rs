@@ -1,4 +1,5 @@
 pub mod access_list;
+pub mod discovery;
 pub mod iroh;
 pub mod protocol;
 pub mod store;

@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use iroh::EndpointId;
 use iroh_docs::{DocTicket, Entry, api::Doc, engine::LiveEvent, store::Query};
 use tokio_stream::StreamExt;
@@ -29,13 +29,9 @@ impl AccessListManager {
                     .await?;
 
                 while let Some(event) = events.next().await {
-                    let event = event?;
-                    match event {
-                        LiveEvent::ContentReady { .. } => {
-                            println!("Finished syncing");
-                            break;
-                        }
-                        _ => {}
+                    if let Ok(LiveEvent::ContentReady { .. }) = event {
+                        println!("Finished syncing");
+                        break;
                     }
                 }
 
@@ -56,13 +52,13 @@ impl AccessListManager {
         let mut acl = self
             .query_for_tag(doc, resource)
             .await?
-            .unwrap_or_else(|| HashSet::new());
+            .unwrap_or_else(HashSet::new);
 
         if acl.insert(*endpoint_id) {
-            self.insert_bytes(&doc, resource, &acl).await?;
-            return Ok(true);
+            self.insert_bytes(doc, resource, &acl).await?;
+            Ok(true)
         } else {
-            return Ok(false);
+            Ok(false)
         }
     }
 

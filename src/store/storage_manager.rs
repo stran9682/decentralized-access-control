@@ -128,7 +128,7 @@ impl StorageManager {
         let tag = format!("{resource}/{filename}");
         let Some(file_tag) = self.iroh_instance.blobs().tags().get(tag).await? else {
             eprintln!("File not found");
-            // send.write_all(&[Status::FileNotFound as u8]).await?;
+            send.write_all(&[Status::FileNotFound as u8]).await?;
             return Ok(false);
         };
 
@@ -162,7 +162,7 @@ impl StorageManager {
         let mut entries: Vec<DirEntry> = fs::read_dir(path)?
             .map(|file| file.map_err(anyhow::Error::from))
             .collect::<anyhow::Result<_>>()?;
-        entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+        entries.sort_by_key(|a| a.file_name());
 
         let mut hash_formats: Vec<(HashAndFormat, String, [u8; 32])> = Vec::new();
         let blobs = self.iroh_instance.blobs();
@@ -263,9 +263,7 @@ impl VideoMetadata {
     }
 
     pub fn generate_proof(&self, filename: &str) -> Option<MerkleVerification> {
-        let Some(index) = self.clip_hashes.get(filename).map(|x| x.0) else {
-            return None;
-        };
+        let index = self.clip_hashes.get(filename).map(|x| x.0)?;
 
         let mut leaves = vec![[0u8; 32]; self.clip_hashes.len()];
         for (index, leaf) in self.clip_hashes.values() {

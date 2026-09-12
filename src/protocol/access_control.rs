@@ -76,7 +76,7 @@ impl AccessControl {
             self.storage_manager
                 .retrieve_local(&request.resource, &request.filename)
                 .await
-                .map(|file| Some(file))
+                .map(Some)
         }
     }
 
