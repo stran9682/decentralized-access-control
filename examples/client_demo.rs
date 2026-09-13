@@ -56,7 +56,12 @@ async fn main() -> anyhow::Result<()> {
         bail!("Error importing to access list, check error: {}", e)
     }
 
-    let request = Request::new(args[2].clone(), "playlist.m3u8".to_string());
+    let request_args: Vec<&str> = args[2].split("/").collect();
+    let request = Request::new(
+        request_args[0].to_string(),
+        request_args[1].to_string(),
+        "playlist.m3u8".to_string(),
+    );
 
     while match access_control
         .make_request(Some(EndpointId::from_str(&args[1])?), &request)

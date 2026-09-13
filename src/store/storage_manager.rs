@@ -16,9 +16,7 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 
 use crate::{
-    ALPN, Status,
-    iroh::{iroh_instance::IrohInstance, iroh_mem_instance::IrohMemInstance},
-    protocol::access_control::Request,
+    ALPN, Status, iroh::iroh_mem_instance::IrohMemInstance, protocol::access_control::Request,
 };
 
 #[derive(Debug, Clone)]
@@ -115,18 +113,21 @@ impl StorageManager {
 
     pub async fn send(
         &self,
+        namespace: &str,
         resource: &str,
         filename: &str,
         send: &mut SendStream,
     ) -> anyhow::Result<bool> {
-        let Some(metadata_tag) = self.iroh_instance.blobs().tags().get(resource).await? else {
-            eprintln!("Tag not found");
+        let mut tag = format!("{namespace}/{resource}");
+
+        let Some(metadata_tag) = self.iroh_instance.blobs().tags().get(&tag).await? else {
+            eprintln!("metadata tag not found");
             send.write_all(&[Status::ResourceNotFound as u8]).await?;
-            bail!("Tag not found")
+            bail!("Metadata tag not found")
         };
 
-        let tag = format!("{resource}/{filename}");
-        let Some(file_tag) = self.iroh_instance.blobs().tags().get(tag).await? else {
+        tag.push_str(&format!("/{filename}"));
+        let Some(file_tag) = self.iroh_instance.blobs().tags().get(&tag).await? else {
             eprintln!("File not found");
             send.write_all(&[Status::FileNotFound as u8]).await?;
             return Ok(false);
@@ -158,7 +159,12 @@ impl StorageManager {
         Ok(true)
     }
 
-    pub async fn upload_dir(&self, path: &str, video_name: &str) -> anyhow::Result<String> {
+    pub async fn upload_dir(
+        &self,
+        path: &str,
+        video_name: &str,
+        namespace: &str,
+    ) -> anyhow::Result<String> {
         let mut entries: Vec<DirEntry> = fs::read_dir(path)?
             .map(|file| file.map_err(anyhow::Error::from))
             .collect::<anyhow::Result<_>>()?;
@@ -194,7 +200,7 @@ impl StorageManager {
             .context("Failed to retreive root hash")?;
 
         for (hash_format, filename, _) in hash_formats.iter() {
-            self.set_tag(&merkle_root, Some(filename), *hash_format)
+            self.set_tag(namespace, Some(&merkle_root), Some(filename), *hash_format)
                 .await?;
         }
 
@@ -209,26 +215,33 @@ impl StorageManager {
             .await?
             .hash_and_format();
 
-        self.set_tag(&merkle_root, None, leaves_hash).await?;
+        self.set_tag(namespace, Some(&merkle_root), None, leaves_hash)
+            .await?;
 
-        Ok(merkle_root)
+        Ok(format!("{namespace}/{merkle_root}"))
     }
 
     async fn set_tag(
         &self,
-        resource: &str,
+        namespace: &str,
+        resource: Option<&str>,
         filename: Option<&str>,
         value: impl Into<HashAndFormat>,
     ) -> anyhow::Result<()> {
         let tags_api = self.iroh_instance.blobs().tags();
 
-        let tag = match filename {
-            Some(filename) => format!("{resource}/{filename}"),
-            None => resource.to_owned(),
-        };
+        let mut tag = namespace.to_string();
+
+        if let Some(resource) = resource {
+            tag.push_str(&format!("/{resource}"));
+        }
+
+        if let Some(filename) = filename {
+            tag.push_str(&format!("/{filename}"));
+        }
 
         if let Err(e) = tags_api.set(tag, value).await {
-            match tags_api.delete_prefix(resource).await {
+            match tags_api.delete_prefix(namespace).await {
                 Ok(num_removed) => {
                     bail!("Failed to set tag, removed {num_removed} in clean up. err: {e}")
                 }

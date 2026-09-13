@@ -41,7 +41,9 @@ async fn main() -> anyhow::Result<()> {
         .accept(ALPN, access_control.clone())
         .spawn();
 
-    let _ = access_control.upload_new("demo_vid", "funny video").await?;
+    let _ = access_control
+        .upload_new("demo_vid", "funny video", None)
+        .await?;
 
     tokio::signal::ctrl_c().await?;
 

@@ -1,9 +1,8 @@
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use anyhow::{Context, bail};
 use iroh::EndpointId;
-use iroh_docs::{DocTicket, Entry, api::Doc, engine::LiveEvent, store::Query};
+use iroh_docs::{DocTicket, NamespaceId, api::Doc, engine::LiveEvent, store::Query};
 use tokio_stream::StreamExt;
 
 use crate::iroh::iroh_mem_instance::IrohMemInstance;
@@ -46,48 +45,47 @@ impl AccessListManager {
     pub async fn append_access_list(
         &self,
         doc: &Doc,
-        resource: &str,
+        resource: Option<&str>,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<bool> {
+        let namespace = doc.id().to_string();
+
         let mut acl = self
-            .query_for_tag(doc, resource)
+            .query_for_tag(doc, &namespace, resource)
             .await?
             .unwrap_or_else(HashSet::new);
 
         if acl.insert(*endpoint_id) {
-            self.insert_bytes(doc, resource, &acl).await?;
+            self.insert_bytes(doc, &namespace, resource, &acl).await?;
             Ok(true)
         } else {
             Ok(false)
         }
     }
 
+    pub async fn get_doc(&self, namespace: &str) -> anyhow::Result<Option<Doc>> {
+        let namespace = NamespaceId::from_str(namespace)?;
+
+        let doc = self.iroh_instance.docs().open(namespace).await?;
+
+        Ok(doc)
+    }
+
     pub async fn get_access_list(
         &self,
+        namespace: &str,
         resource: &str,
     ) -> anyhow::Result<Option<(Doc, HashSet<EndpointId>)>> {
-        let mut stream = self.iroh_instance.docs().list().await?;
+        let Some(doc) = self.get_doc(namespace).await? else {
+            return Ok(None);
+        };
 
-        while let Some(Ok((namespace, _))) = stream.next().await {
-            let doc = self
-                .iroh_instance
-                .docs()
-                .open(namespace)
-                .await?
-                .with_context(|| {
-                    format!(
-                        "Couldn't open document. Namespace ({}), was not found",
-                        namespace.fmt_short()
-                    )
-                })?;
-
-            if let Some(access_list) = self.query_for_tag(&doc, resource).await? {
+        for resource_tag in [None, Some(resource)] {
+            if let Some(access_list) = self.query_for_tag(&doc, namespace, resource_tag).await? {
                 println!("Access list:");
-
                 for (i, peer) in access_list.iter().enumerate() {
-                    println!("{i}: {peer}")
+                    println!("{i}: {peer}");
                 }
-
                 return Ok(Some((doc, access_list)));
             }
         }
@@ -98,46 +96,55 @@ impl AccessListManager {
     async fn query_for_tag(
         &self,
         doc: &Doc,
-        resource: &str,
+        namespace: &str,
+        resource: Option<&str>,
     ) -> anyhow::Result<Option<HashSet<EndpointId>>> {
-        let entries = doc.get_many(Query::single_latest_per_key().build()).await?;
-        let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
-        let mut entries = entries.iter_mut();
+        let mut tag = namespace.to_string();
+        if let Some(resource) = resource {
+            tag.push_str(&format!("/{resource}"));
+        };
 
-        while let Some(Ok(entry)) = entries.next() {
-            match self
-                .iroh_instance
-                .blobs()
-                .get_bytes(entry.content_hash())
-                .await
-            {
-                Ok(bytes) => {
-                    if resource == String::from_utf8(entry.key().to_vec())? {
-                        let list_members: HashSet<EndpointId> = serde_json::from_slice(&bytes)?;
-                        return Ok(Some(list_members));
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error reading entry: {e}");
-                }
+        let Some(entry) = doc
+            .get_one(Query::single_latest_per_key().key_exact(tag).build())
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        match self
+            .iroh_instance
+            .blobs()
+            .get_bytes(entry.content_hash())
+            .await
+        {
+            Ok(bytes) => {
+                let list_members: HashSet<EndpointId> = serde_json::from_slice(&bytes)?;
+                Ok(Some(list_members))
+            }
+            Err(e) => {
+                eprintln!("Error reading entry: {e}");
+                Ok(None)
             }
         }
-
-        Ok(None)
     }
 
     async fn insert_bytes(
         &self,
         doc: &Doc,
-        resource: &str,
+        namespace: &str,
+        resource: Option<&str>,
         access_list: &HashSet<EndpointId>,
     ) -> anyhow::Result<()> {
+        let mut tag = namespace.to_string();
+        if let Some(resource) = resource {
+            tag.push_str(&format!("/{resource}"));
+        };
+
         let content = serde_json::to_vec(access_list)?;
-        let resource = String::from(resource);
 
         doc.set_bytes(
             self.iroh_instance.docs().author_default().await?,
-            resource,
+            tag,
             content,
         )
         .await?;

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 
 use axum::{
     Router,
@@ -11,7 +11,7 @@ use axum::{
 use decentralized_access_control::{
     ALPN,
     access_list::list_manager::AccessListManager,
-    iroh::{iroh_instance::IrohInstance, iroh_mem_instance::IrohMemInstance},
+    iroh::iroh_mem_instance::IrohMemInstance,
     protocol::access_control::{AccessControl, Request},
     store::storage_manager::StorageManager,
 };
@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[derive(Deserialize)]
 struct RequestArgs {
+    namespace: String,
     resource: String,
     filename: String,
     endpoint_id: Option<String>,
@@ -81,11 +82,16 @@ impl AccessControlService {
 
     pub async fn download_file(
         &self,
+        namespace: &str,
         resource: &str,
         filename: &str,
         endpoint_id: Option<EndpointId>,
     ) -> anyhow::Result<Option<File>> {
-        let request = Request::new(String::from(resource), String::from(filename));
+        let request = Request::new(
+            String::from(namespace),
+            String::from(resource),
+            String::from(filename),
+        );
 
         let file = self
             .access_control
@@ -107,7 +113,12 @@ async fn download_handler(
     };
 
     let file = match access_control_service
-        .download_file(&request_args.resource, &request_args.filename, endpoint_id)
+        .download_file(
+            &request_args.namespace,
+            &request_args.resource,
+            &request_args.filename,
+            endpoint_id,
+        )
         .await
     {
         Ok(Some(file)) => file,
