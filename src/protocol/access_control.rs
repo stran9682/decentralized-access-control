@@ -139,13 +139,18 @@ impl AccessControl {
             (doc.id().into_public_key()?.to_string(), doc)
         };
 
-        let namespace_resource = self
+        let resource = self
             .storage_manager
             .upload_dir(path, video_name, &namespace)
             .await?;
 
         self.list_manager
             .append_access_list(&doc, None, &self.endpoint_id)
+            .await?;
+
+        // this is so the file shows up in docs,
+        self.list_manager
+            .append_access_list(&doc, Some(&resource), &self.endpoint_id)
             .await?;
 
         let ticket = doc
@@ -155,7 +160,7 @@ impl AccessControl {
             )
             .await?;
 
-        println!("Resource: {}", namespace_resource);
+        println!("Resource: {}/{}", namespace, resource);
         println!("Ticket: {}", ticket);
 
         Ok(doc)
@@ -169,7 +174,7 @@ impl AccessControl {
             .append_access_list(&doc, None, &self.endpoint_id)
             .await?;
 
-        // TODO : sync blobs
+        // todo!("Sync blobs");
 
         Ok(())
     }

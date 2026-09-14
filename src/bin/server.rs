@@ -11,14 +11,15 @@ use axum::{
 use decentralized_access_control::{
     ALPN,
     access_list::list_manager::AccessListManager,
+    // discovery::discovery_service::DiscoveryService,
     iroh::iroh_mem_instance::IrohMemInstance,
     protocol::access_control::{AccessControl, Request},
     store::storage_manager::StorageManager,
 };
 use iroh::{Endpoint, EndpointId, endpoint::presets, protocol::Router as ARouter};
-use iroh_blobs::store::mem::MemStore;
+use iroh_blobs::{ALPN as BLOBS_ALPN, BlobsProtocol, store::mem::MemStore};
 use iroh_docs::{ALPN as DOCS_ALPN, protocol::Docs};
-use iroh_gossip::Gossip;
+use iroh_gossip::{ALPN as GOSSIP_ALPN, Gossip};
 use serde::Deserialize;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
@@ -27,26 +28,27 @@ use tokio_util::io::ReaderStream;
 async fn main() -> anyhow::Result<()> {
     // let iroh_instance = IrohInstance::new(PathBuf::new()).await?;
     let endpoint = Endpoint::bind(presets::N0).await?;
-    let blobs = MemStore::new();
+    let acl_blobs = MemStore::new();
+    let storage_blobs = MemStore::new();
     let gossip = Gossip::builder().spawn(endpoint.clone());
 
     let docs = Docs::memory()
-        .spawn(endpoint.clone(), (*blobs).clone(), gossip)
+        .spawn(endpoint.clone(), (*acl_blobs).clone(), gossip.clone())
         .await?;
 
-    let iroh_instance = IrohMemInstance::new(blobs, docs, endpoint);
+    let acl_iroh = IrohMemInstance::new(acl_blobs.clone(), docs.clone(), endpoint.clone());
+    let storage_iroh = IrohMemInstance::new(storage_blobs, docs.clone(), endpoint.clone());
 
-    let list_manager = AccessListManager::new(iroh_instance.clone());
-    let storage_manager = StorageManager::new(iroh_instance.clone());
+    let list_manager = AccessListManager::new(acl_iroh.clone());
+    let storage_manager = StorageManager::new(storage_iroh);
+    //let discovery_service = DiscoveryService::new(endpoint.clone(), gossip.clone());
 
-    let access_control = AccessControl::new(
-        list_manager.clone(),
-        storage_manager,
-        iroh_instance.endpoint().id(),
-    );
+    let access_control = AccessControl::new(list_manager.clone(), storage_manager, endpoint.id());
 
-    let _router = ARouter::builder(iroh_instance.endpoint().clone())
-        .accept(DOCS_ALPN, iroh_instance.docs().clone())
+    let _router = ARouter::builder(endpoint)
+        .accept(DOCS_ALPN, docs)
+        .accept(GOSSIP_ALPN, gossip)
+        .accept(BLOBS_ALPN, BlobsProtocol::new(&acl_blobs, None))
         .accept(ALPN, access_control.clone())
         .spawn();
 

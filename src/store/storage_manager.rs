@@ -218,7 +218,7 @@ impl StorageManager {
         self.set_tag(namespace, Some(&merkle_root), None, leaves_hash)
             .await?;
 
-        Ok(format!("{namespace}/{merkle_root}"))
+        Ok(merkle_root)
     }
 
     async fn set_tag(
