@@ -1,6 +1,9 @@
 use decentralized_access_control::{
-    ALPN, access_list::list_manager::AccessListManager, iroh::iroh_mem_instance::IrohMemInstance,
-    protocol::access_control::AccessControl, store::storage_manager::StorageManager,
+    ALPN, DISCOVERY_ALPN,
+    access_list::list_manager::AccessListManager,
+    iroh::iroh_mem_instance::IrohMemInstance,
+    protocol::{access_control::AccessControl, video_discovery::VideoDiscovery},
+    store::storage_manager::StorageManager,
 };
 use iroh::{Endpoint, endpoint::presets, protocol::Router as ARouter};
 use iroh_blobs::{ALPN as BLOBS_ALPN, BlobsProtocol, store::mem::MemStore};
@@ -25,6 +28,7 @@ async fn main() -> anyhow::Result<()> {
         IrohMemInstance::new(access_list_blobs.clone(), docs.clone(), endpoint.clone());
 
     let list_manager = AccessListManager::new(acl_iroh_instance);
+    let video_discovery = VideoDiscovery::new(list_manager.clone());
 
     let storage_blobs = MemStore::new();
     let storage_iroh_instance = IrohMemInstance::new(storage_blobs, docs.clone(), endpoint.clone());
@@ -39,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
         .accept(GOSSIP_ALPN, gossip)
         .accept(BLOBS_ALPN, BlobsProtocol::new(&access_list_blobs, None))
         .accept(ALPN, access_control.clone())
+        .accept(DISCOVERY_ALPN, video_discovery)
         .spawn();
 
     let _ = access_control
