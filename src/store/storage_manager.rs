@@ -253,6 +253,25 @@ impl StorageManager {
 
         Ok(())
     }
+
+    pub async fn get_filenames(&self, tags: &Vec<String>) -> anyhow::Result<Vec<(String, String)>> {
+        let mut files: Vec<(String, String)> = Vec::new();
+        for tag in tags {
+            let Some(entry) = self.iroh_instance.blobs().tags().get(tag).await? else {
+                continue;
+            };
+
+            let Ok(bytes) = self.iroh_instance.blobs().get_bytes(entry.hash).await else {
+                continue;
+            };
+
+            if let Ok(video_metadata) = serde_json::from_slice::<VideoMetadata>(&bytes) {
+                files.push((tag.clone(), video_metadata.video_name));
+            }
+        }
+
+        Ok(files)
+    }
 }
 
 #[derive(Serialize, Deserialize)]

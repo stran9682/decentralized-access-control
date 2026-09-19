@@ -1,15 +1,18 @@
+use std::io::{self, ErrorKind};
+
 use anyhow::bail;
 use iroh::{
     EndpointId,
     endpoint::{RecvStream, SendStream},
-    protocol::ProtocolHandler,
+    protocol::{AcceptError, ProtocolHandler},
 };
 use iroh_docs::{DocTicket, api::Doc};
 use serde::{Deserialize, Serialize};
-use tokio::fs::File;
+use tokio::{fs::File, io::AsyncReadExt};
 
 use crate::{
-    Status, access_list::list_manager::AccessListManager, store::storage_manager::StorageManager,
+    ALPN, DISCOVERY_ALPN, Status, access_list::list_manager::AccessListManager,
+    store::storage_manager::StorageManager,
 };
 
 #[derive(Debug, Clone)]
@@ -28,20 +31,44 @@ impl ProtocolHandler for AccessControl {
         while let Ok((mut send, mut recv)) = connection.accept_bi().await {
             let access_control = self.clone();
 
-            tokio::spawn(async move {
-                match access_control
-                    .handle_request(peer, &mut send, &mut recv)
-                    .await
-                {
-                    Err(e) => eprintln!("Error handling request: {e}"),
-                    Ok(false) => eprintln!("Invalid data"),
-                    _ => (),
-                }
+            match connection.alpn() {
+                ALPN => {
+                    tokio::spawn(async move {
+                        match access_control
+                            .handle_request(peer, &mut send, &mut recv)
+                            .await
+                        {
+                            Err(e) => eprintln!("Error handling request: {e}"),
+                            Ok(false) => eprintln!("Invalid data"),
+                            _ => (),
+                        }
 
-                if let Err(e) = send.finish() {
-                    eprintln!("Stream was closed already: {e}")
+                        if let Err(e) = send.finish() {
+                            eprintln!("Stream was closed already: {e}")
+                        }
+                    });
                 }
-            });
+                DISCOVERY_ALPN => {
+                    tokio::spawn(async move {
+                        if let Err(e) = access_control
+                            .handle_discovery_request(peer, &mut send, &mut recv)
+                            .await
+                        {
+                            eprintln!("Error occured handling discovery request, {}", e);
+                        }
+
+                        if let Err(e) = send.finish() {
+                            eprintln!("Stream was closed already: {e}")
+                        }
+                    });
+                }
+                _ => {
+                    return Err(AcceptError::from_err(io::Error::new(
+                        ErrorKind::PermissionDenied,
+                        "ALPN doesn't exist",
+                    )));
+                }
+            }
         }
 
         Ok(())
@@ -120,6 +147,38 @@ impl AccessControl {
             .await?;
 
         Ok(true)
+    }
+
+    async fn handle_discovery_request(
+        &self,
+        endpoint_id: EndpointId,
+        send: &mut SendStream,
+        recv: &mut RecvStream,
+    ) -> anyhow::Result<()> {
+        let len = recv.read_u32().await?;
+
+        let mut request_bytes: Vec<u8> = vec![0u8; len as usize];
+        recv.read_exact(&mut request_bytes).await?;
+
+        let namespace = String::from_utf8(request_bytes)?;
+
+        let Some(list) = self
+            .list_manager
+            .get_authorized_videos(&namespace, &endpoint_id)
+            .await?
+        else {
+            send.write(&[Status::FileNotFound as u8]).await?;
+            bail!("Couldn't find namespace");
+        };
+
+        let files = self.storage_manager.get_filenames(&list).await?;
+
+        send.write(&[Status::Allowed as u8]).await?;
+
+        let list_bytes = serde_json::to_vec(&files)?;
+        send.write_all(&list_bytes).await?;
+
+        Ok(())
     }
 
     pub async fn upload_new(

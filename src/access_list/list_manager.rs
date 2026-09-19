@@ -98,43 +98,56 @@ impl AccessListManager {
         namespace: &str,
         endpoint_id: &EndpointId,
     ) -> anyhow::Result<Option<Vec<String>>> {
-        if let Some(doc) = self
+        let Some(doc) = self
             .iroh_instance
             .docs()
             .open(NamespaceId::from_str(namespace)?)
             .await?
-        {
-            let entries = doc.get_many(Query::single_latest_per_key().build()).await?;
-            let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
-            let mut entries = entries.iter_mut();
+        else {
+            return Ok(None);
+        };
 
-            let mut authorized_videos: Vec<String> = Vec::new();
+        let entries = doc.get_many(Query::single_latest_per_key().build()).await?;
+        let mut entries: Vec<Result<Entry, anyhow::Error>> = entries.collect().await;
+        let mut entries = entries.iter_mut();
 
-            while let Some(Ok(entry)) = entries.next() {
-                if let Ok(bytes) = self
-                    .iroh_instance
-                    .blobs()
-                    .get_bytes(entry.content_hash())
-                    .await
-                {
-                    let Ok(acl) = serde_json::from_slice::<HashSet<EndpointId>>(&bytes) else {
-                        continue;
-                    };
+        let mut videos: Vec<String> = Vec::new();
+        let mut authorization_levels: Vec<String> = Vec::new();
 
-                    if acl.contains(endpoint_id) {
-                        let Ok(tag) = String::from_utf8(entry.key().to_vec()) else {
-                            continue;
-                        };
+        while let Some(Ok(entry)) = entries.next() {
+            if let Ok(bytes) = self
+                .iroh_instance
+                .blobs()
+                .get_bytes(entry.content_hash())
+                .await
+            {
+                let Ok(acl) = serde_json::from_slice::<HashSet<EndpointId>>(&bytes) else {
+                    continue;
+                };
 
-                        authorized_videos.push(tag);
-                    }
+                let Ok(tag) = String::from_utf8(entry.key().to_vec()) else {
+                    continue;
+                };
+
+                videos.push(tag.clone());
+
+                if acl.contains(endpoint_id) {
+                    authorization_levels.push(tag);
                 }
             }
-
-            return Ok(Some(authorized_videos));
-        } else {
-            return Ok(None);
         }
+
+        let mut authorized_videos: Vec<String> = Vec::new();
+        for video in videos.iter() {
+            for authorization_level in authorization_levels.iter() {
+                if video.contains(authorization_level) {
+                    authorized_videos.push(video.clone());
+                    break;
+                }
+            }
+        }
+
+        return Ok(Some(authorized_videos));
     }
 
     async fn query_for_tag(
