@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub mod access_list;
 pub mod discovery;
 pub mod iroh;
@@ -29,4 +31,11 @@ impl TryFrom<u8> for Status {
             _ => Ok(Status::UnknownError),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoInfo {
+    pub tag: String,
+    pub video_name: String,
 }

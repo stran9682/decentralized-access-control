@@ -11,12 +11,13 @@ use serde::{Deserialize, Serialize};
 use tempfile::tempfile;
 use tokio::{
     fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom},
 };
 use tokio_util::io::ReaderStream;
 
 use crate::{
-    ALPN, Status, iroh::iroh_mem_instance::IrohMemInstance, protocol::access_control::Request,
+    ALPN, Status, VideoInfo, iroh::iroh_mem_instance::IrohMemInstance,
+    protocol::access_control::Request,
 };
 
 #[derive(Debug, Clone)]
@@ -47,6 +48,7 @@ impl StorageManager {
             .context("Tag not found locally")?;
         let mut reader = self.iroh_instance.blobs().reader(tag_info.hash);
         tokio::io::copy(&mut reader, &mut file_writer).await?;
+        file_writer.seek(SeekFrom::Start(0)).await?;
 
         Ok(file_writer)
     }
@@ -96,6 +98,7 @@ impl StorageManager {
         // this is being loaded all into memory
         let file_bytes = recv.read_to_end(usize::MAX).await?;
         file_writer.write_all(&file_bytes).await?;
+        file_writer.seek(SeekFrom::Start(0)).await?;
 
         let hash = sha256::digest(&file_bytes);
         let hash_bytes: [u8; 32] = hex::decode(&hash)?
@@ -254,8 +257,8 @@ impl StorageManager {
         Ok(())
     }
 
-    pub async fn get_filenames(&self, tags: &Vec<String>) -> anyhow::Result<Vec<(String, String)>> {
-        let mut files: Vec<(String, String)> = Vec::new();
+    pub async fn get_filenames(&self, tags: &Vec<String>) -> anyhow::Result<Vec<VideoInfo>> {
+        let mut files: Vec<VideoInfo> = Vec::new();
         for tag in tags {
             let Some(entry) = self.iroh_instance.blobs().tags().get(tag).await? else {
                 continue;
@@ -266,7 +269,10 @@ impl StorageManager {
             };
 
             if let Ok(video_metadata) = serde_json::from_slice::<VideoMetadata>(&bytes) {
-                files.push((tag.clone(), video_metadata.video_name));
+                files.push(VideoInfo {
+                    tag: tag.clone(),
+                    video_name: video_metadata.video_name,
+                });
             }
         }
 
